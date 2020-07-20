@@ -10,13 +10,16 @@ services:
       context: ./account
       # dockerfile: ./Dockerfile
     depends_on:
-      - postgresql
+      - database
+    environment:
+      - DB_HOST=database
+      - DB_NAME=accounts
     networks:
       - my-network
     ports:
       - 8080:8080
 
-  postgresql:
+  database:
     image: postgres:12.3-alpine
     healthcheck:
       test: [ "CMD", "pg_isready", "-q", "-d", "postgres", "-U", "root" ]
@@ -27,6 +30,7 @@ services:
     environment:
       - POSTGRES_USER=root
       - POSTGRES_PASSWORD=password
+      - POSTGRES_DB=accounts
     volumes:
       - ./scripts/db:/docker-entrypoint-initdb.d/
     networks:
