@@ -19,6 +19,18 @@ services:
     ports:
       - 8080:8080
 
+  svc-poller:
+    build: 
+      context: ./poller
+      # dockerfile: ./Dockerfile
+    depends_on:
+      - database
+    environment:
+      - DB_HOST=database
+      - DB_NAME=accounts
+    networks:
+      - my-network
+
   database:
     image: postgres:12.3-alpine
     healthcheck:

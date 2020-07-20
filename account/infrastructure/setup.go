@@ -24,6 +24,9 @@ type Config struct {
 func Setup() {
 	cfg := &Config{}
 	err := env.Parse(cfg)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.DbUser, cfg.DbPassword, cfg.DbHost, cfg.DbPort, cfg.DbName)
 
