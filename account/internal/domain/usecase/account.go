@@ -3,7 +3,7 @@ package usecase
 import (
 	"context"
 
-	"github.com/quintans/es-cqrs-money-transfer/account/internal/domain/entity"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/eventstore"
 )
 

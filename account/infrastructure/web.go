@@ -3,7 +3,7 @@ package infrastructure
 import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/quintans/es-cqrs-money-transfer/account/internal/controller/web"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller/web"
 )
 
 func StartRestServer() {

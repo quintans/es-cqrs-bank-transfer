@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/quintans/es-cqrs-money-transfer/account/infrastructure"
+	"github.com/quintans/es-cqrs-bank-transfer/account/infrastructure"
 )
 
 func main() {
