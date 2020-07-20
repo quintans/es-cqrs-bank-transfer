@@ -1,0 +1,35 @@
+version: '3'
+
+networks:
+  my-network:
+    driver: bridge
+
+services:
+  svc-account:
+    build: 
+      context: ./account
+      # dockerfile: ./Dockerfile
+    depends_on:
+      - postgresql
+    networks:
+      - my-network
+    ports:
+      - 8080:8080
+
+  postgresql:
+    image: postgres:12.3-alpine
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-q", "-d", "postgres", "-U", "root" ]
+      timeout: 45s
+      interval: 10s
+      retries: 10
+    restart: always
+    environment:
+      - POSTGRES_USER=root
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - ./scripts/db:/docker-entrypoint-initdb.d/
+    networks:
+      - my-network
+    ports:
+      - 5432:5432
