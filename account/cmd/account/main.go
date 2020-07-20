@@ -5,5 +5,5 @@ import (
 )
 
 func main() {
-	infrastructure.StartRestServer()
+	infrastructure.Setup()
 }
