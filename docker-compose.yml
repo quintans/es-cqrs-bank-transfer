@@ -14,10 +14,11 @@ services:
     environment:
       - DB_HOST=database
       - DB_NAME=accounts
+      - API_PORT=8000
     networks:
       - my-network
     ports:
-      - 8080:8080
+      - 8000:8000
 
   svc-poller:
     build: 
@@ -25,9 +26,24 @@ services:
       # dockerfile: ./Dockerfile
     depends_on:
       - database
+      - pulsar
     environment:
       - DB_HOST=database
       - DB_NAME=accounts
+      - PULSAR_ADDRESS=pulsar:6650
+      - TOPIC=accounts
+    networks:
+      - my-network
+
+  svc-balance:
+    build: 
+      context: ./balance
+      # dockerfile: ./Dockerfile
+    depends_on:
+      - pulsar
+    environment:
+      - PULSAR_ADDRESS=pulsar:6650
+      - TOPIC=accounts
     networks:
       - my-network
 
@@ -49,3 +65,18 @@ services:
       - my-network
     ports:
       - 5432:5432
+
+  pulsar:
+    image: apachepulsar/pulsar:2.6.0
+    volumes:
+      - pulsardata:/pulsar/data
+      - pulsarconf:/pulsar/conf
+    networks:
+      - my-network
+    ports:
+      - 6650:6650
+      - 8080:8080
+    command: bin/pulsar standalone
+volumes:
+  pulsardata:
+  pulsarconf:
