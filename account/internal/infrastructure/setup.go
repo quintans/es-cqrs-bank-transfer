@@ -13,7 +13,7 @@ import (
 )
 
 type Config struct {
-	ApiPort           int    `env:"API_PORT" envDefault:"8080"`
+	ApiPort           int    `env:"API_PORT" envDefault:"8000"`
 	DbUser            string `env:"DB_USER" envDefault:"root"`
 	DbPassword        string `env:"DB_PASSWORD" envDefault:"password"`
 	DbHost            string `env:"DB_HOST"`
