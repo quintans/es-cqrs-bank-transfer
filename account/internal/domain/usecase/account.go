@@ -9,6 +9,10 @@ import (
 	"github.com/quintans/eventstore"
 )
 
+var (
+	ErrNotEnoughFunds = errors.New("Not enough funds")
+)
+
 type AccountUsecase struct {
 	es eventstore.EventStore
 }
@@ -49,13 +53,11 @@ func (uc AccountUsecase) Withdraw(ctx context.Context, cmd WithdrawCommand) erro
 		return err
 	}
 
-	acc.Withdraw(cmd.Amount)
-
-	if err := uc.es.Save(ctx, acc, eventstore.Options{}); err != nil {
-		return err
+	if acc.Withdraw(cmd.Amount) {
+		return uc.es.Save(ctx, acc, eventstore.Options{})
 	}
 
-	return nil
+	return ErrNotEnoughFunds
 }
 
 func (uc AccountUsecase) Transfer(ctx context.Context, cmd TransferCommand) error {

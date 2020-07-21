@@ -13,6 +13,7 @@ import (
 )
 
 type Config struct {
+	ApiPort           int    `env:"API_PORT" envDefault:"8080"`
 	DbUser            string `env:"DB_USER" envDefault:"root"`
 	DbPassword        string `env:"DB_PASSWORD" envDefault:"password"`
 	DbHost            string `env:"DB_HOST"`
@@ -44,10 +45,10 @@ func Setup() {
 	c := web.NewController(uc)
 
 	// Rest server
-	StartRestServer(c)
+	StartRestServer(c, cfg.ApiPort)
 }
 
-func StartRestServer(c web.Controller) {
+func StartRestServer(c web.Controller, port int) {
 	// Echo instance
 	e := echo.New()
 
@@ -63,5 +64,6 @@ func StartRestServer(c web.Controller) {
 	e.POST("/transfer", c.Transfer)
 
 	// Start server
-	e.Logger.Fatal(e.Start(":8080"))
+	address := fmt.Sprintf(":%d", port)
+	e.Logger.Fatal(e.Start(address))
 }
