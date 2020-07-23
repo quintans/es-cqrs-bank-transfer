@@ -140,10 +140,10 @@ func (p *PulsarSink) LastEventID(ctx context.Context) (string, error) {
 }
 
 // Send sends the event to pulsar
-func (p *PulsarSink) Send(ctx context.Context, e common.Event) {
+func (p *PulsarSink) Send(ctx context.Context, e common.Event) error {
 	b, err := json.Marshal(e)
 	if err != nil {
-		log.Println(err)
+		return nil
 	}
 
 	_, err = p.producer.Send(context.Background(), &pulsar.ProducerMessage{
@@ -156,7 +156,7 @@ func (p *PulsarSink) Send(ctx context.Context, e common.Event) {
 		EventTime: time.Now(),
 	})
 	if err != nil {
-		fmt.Println("Failed to send message", err)
+		return fmt.Errorf("Failed to send message: %w", err)
 	}
-
+	return nil
 }
