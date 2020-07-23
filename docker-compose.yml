@@ -41,6 +41,7 @@ services:
       # dockerfile: ./Dockerfile
     depends_on:
       - pulsar
+      - elastic
     environment:
       - PULSAR_ADDRESS=pulsar:6650
       - TOPIC=accounts
@@ -77,6 +78,21 @@ services:
       - 6650:6650
       - 8080:8080
     command: bin/pulsar standalone
+
+  elastic:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.8.0
+    environment:
+      - discovery.type=single-node
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - data01:/usr/share/elasticsearch/data
+    ports:
+      - 9200:9200
+      - 9300:9300
+    networks:
+      - my-network
 volumes:
   pulsardata:
   pulsarconf:
+  data01:
+    driver: local
