@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/eventstore"
 )
@@ -23,7 +24,7 @@ func NewAccountUsecase(es eventstore.EventStore) AccountUsecase {
 	}
 }
 
-func (uc AccountUsecase) Create(ctx context.Context, createAccount CreateCommand) (string, error) {
+func (uc AccountUsecase) Create(ctx context.Context, createAccount domain.CreateCommand) (string, error) {
 	id := uuid.New().String()
 	acc := entity.CreateAccount(createAccount.Owner, id, createAccount.Money)
 	if err := uc.es.Save(ctx, acc, eventstore.Options{}); err != nil {
@@ -32,7 +33,7 @@ func (uc AccountUsecase) Create(ctx context.Context, createAccount CreateCommand
 	return id, nil
 }
 
-func (uc AccountUsecase) Deposit(ctx context.Context, cmd DepositCommand) error {
+func (uc AccountUsecase) Deposit(ctx context.Context, cmd domain.DepositCommand) error {
 	acc := entity.NewAccount()
 	if err := uc.es.GetByID(ctx, cmd.ID, acc); err != nil {
 		return err
@@ -47,7 +48,7 @@ func (uc AccountUsecase) Deposit(ctx context.Context, cmd DepositCommand) error 
 	return nil
 }
 
-func (uc AccountUsecase) Withdraw(ctx context.Context, cmd WithdrawCommand) error {
+func (uc AccountUsecase) Withdraw(ctx context.Context, cmd domain.WithdrawCommand) error {
 	acc := entity.NewAccount()
 	if err := uc.es.GetByID(ctx, cmd.ID, acc); err != nil {
 		return err
@@ -60,6 +61,6 @@ func (uc AccountUsecase) Withdraw(ctx context.Context, cmd WithdrawCommand) erro
 	return ErrNotEnoughFunds
 }
 
-func (uc AccountUsecase) Transfer(ctx context.Context, cmd TransferCommand) error {
+func (uc AccountUsecase) Transfer(ctx context.Context, cmd domain.TransferCommand) error {
 	return errors.New("Not implemented")
 }

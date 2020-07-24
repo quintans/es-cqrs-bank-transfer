@@ -1,18 +1,18 @@
-package web
+package controller
 
 import (
 	"errors"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/usecase"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 )
 
 type Controller struct {
-	accountUc usecase.AccountUsecaser
+	accountUc domain.AccountUsecaser
 }
 
-func NewController(accountUc usecase.AccountUsecaser) Controller {
+func NewController(accountUc domain.AccountUsecaser) Controller {
 	return Controller{
 		accountUc: accountUc,
 	}
@@ -25,7 +25,7 @@ func (ctl Controller) Hello(c echo.Context) error {
 
 // Create calls the usecase to crete a new account
 func (ctl Controller) Create(c echo.Context) error {
-	cmd := usecase.CreateCommand{}
+	cmd := domain.CreateCommand{}
 	if err := c.Bind(&cmd); err != nil {
 		return err
 	}
@@ -37,7 +37,7 @@ func (ctl Controller) Create(c echo.Context) error {
 }
 
 func (ctl Controller) Deposit(c echo.Context) error {
-	cmd := usecase.DepositCommand{}
+	cmd := domain.DepositCommand{}
 	if err := c.Bind(&cmd); err != nil {
 		return err
 	}
@@ -49,7 +49,7 @@ func (ctl Controller) Deposit(c echo.Context) error {
 }
 
 func (ctl Controller) Withdraw(c echo.Context) error {
-	cmd := usecase.WithdrawCommand{}
+	cmd := domain.WithdrawCommand{}
 	if err := c.Bind(&cmd); err != nil {
 		return err
 	}

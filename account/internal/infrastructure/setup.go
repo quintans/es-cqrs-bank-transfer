@@ -4,10 +4,9 @@ import (
 	"fmt"
 	"log"
 
-	"github.com/caarlos0/env/v6"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller/web"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/usecase"
 	"github.com/quintans/eventstore"
 )
@@ -22,13 +21,7 @@ type Config struct {
 	SnapshotThreshold int    `env:"SNAPSHOT_THRESHOLD" envDefault:"5"`
 }
 
-func Setup() {
-	cfg := &Config{}
-	err := env.Parse(cfg)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+func Setup(cfg *Config) {
 	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.DbUser, cfg.DbPassword, cfg.DbHost, cfg.DbPort, cfg.DbName)
 
 	// evenstore
@@ -42,13 +35,13 @@ func Setup() {
 	uc := usecase.NewAccountUsecase(es)
 
 	// Controllers
-	c := web.NewController(uc)
+	c := controller.NewController(uc)
 
 	// Rest server
 	StartRestServer(c, cfg.ApiPort)
 }
 
-func StartRestServer(c web.Controller, port int) {
+func StartRestServer(c controller.Controller, port int) {
 	// Echo instance
 	e := echo.New()
 
