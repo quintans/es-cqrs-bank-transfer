@@ -71,8 +71,7 @@ func main() {
 }
 
 const (
-	EventIDKey       = "EventID"
-	AggregateTypeKey = "AggregateType"
+	EventIDKey = "EventID"
 )
 
 type PulsarSink struct {
@@ -149,8 +148,7 @@ func (p *PulsarSink) Send(ctx context.Context, e common.Event) error {
 	_, err = p.producer.Send(context.Background(), &pulsar.ProducerMessage{
 		Payload: b,
 		Properties: map[string]string{
-			EventIDKey:       e.ID,
-			AggregateTypeKey: e.AggregateType,
+			EventIDKey: e.ID,
 		},
 		Key:       e.AggregateID,
 		EventTime: time.Now(),
