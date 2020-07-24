@@ -14,4 +14,5 @@ type BalanceUsecase interface {
 type BalanceRepository interface {
 	GetEventID(ctx context.Context, aggregateID string) (string, error)
 	CreateAccount(ctx context.Context, balance entity.Balance) error
+	Update(ctx context.Context, balance entity.Balance) error
 }

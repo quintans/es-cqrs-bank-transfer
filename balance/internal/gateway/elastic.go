@@ -37,7 +37,7 @@ func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID string) (
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return "", fmt.Errorf("[%s] Error getting document ID=%d", res.Status(), aggregateID)
+		return "", fmt.Errorf("[%s] Error getting document ID=%s", res.Status(), aggregateID)
 	}
 	// Deserialize the response into a map.
 	r := esResponse{
@@ -70,12 +70,32 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("[%s] Error indexing document ID=%d", res.Status(), balance.ID)
+		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), balance.ID)
 	}
-	// Deserialize the response into a map.
-	var r map[string]interface{}
-	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
-		return fmt.Errorf("Error parsing the response body for IndexRequest: %w", err)
+	return nil
+}
+
+func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) error {
+	var s strings.Builder
+	if err := json.NewEncoder(&s).Encode(balance); err != nil {
+		return err
+	}
+
+	req := esapi.UpdateRequest{
+		Index:      index,
+		DocumentID: balance.ID,
+		Body:       strings.NewReader(s.String()),
+		Refresh:    "true",
+	}
+
+	res, err := req.Do(ctx, b.Client)
+	if err != nil {
+		return fmt.Errorf("Error getting response for UpdateRequest(balance): %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.IsError() {
+		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), balance.ID)
 	}
 	return nil
 }
