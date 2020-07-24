@@ -6,10 +6,16 @@ To build and run
 docker-compose up --build
 ```
 
+before run  the examples bellow we need to create an index in elasticsearch.
+```sh
+curl -X PUT http://localhost:9200/balance
+```
+
+
 create a user account with some money
 ```sh
-curl --H "Content-Type: application/json" \
-  --d '{"owner":"Paulo", "amount": 50}' \
+curl -H "Content-Type: application/json" \
+  -d '{"owner":"Paulo", "amount": 50}' \
   http://localhost:8000/create
 ```
 
@@ -17,14 +23,14 @@ The previous returns an ID. Use that for ID for the next calls.
 
 deposit money
 ```sh
-curl --H "Content-Type: application/json" \
-  --d '{"id":"8f0cf478-1be5-4660-aaa2-650b186ecbbb", "amount": 100}' \
+curl -H "Content-Type: application/json" \
+  -d '{"id":"8f0cf478-1be5-4660-aaa2-650b186ecbbb", "amount": 100}' \
   http://localhost:8000/deposit
 ```
 
 withdraw money
 ```sh
-curl --H "Content-Type: application/json" \
-  --d '{"id":"8f0cf478-1be5-4660-aaa2-650b186ecbbb", "amount": 20}' \
+curl -H "Content-Type: application/json" \
+  -d '{"id":"8f0cf478-1be5-4660-aaa2-650b186ecbbb", "amount": 20}' \
   http://localhost:8000/withdraw
 ```
