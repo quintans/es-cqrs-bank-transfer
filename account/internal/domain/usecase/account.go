@@ -8,6 +8,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/eventstore"
+	log "github.com/sirupsen/logrus"
 )
 
 var (
@@ -26,6 +27,9 @@ func NewAccountUsecase(es eventstore.EventStore) AccountUsecase {
 
 func (uc AccountUsecase) Create(ctx context.Context, createAccount domain.CreateCommand) (string, error) {
 	id := uuid.New().String()
+	log.WithFields(log.Fields{
+		"method": "AccountUsecase.Create",
+	}).Infof("Creating account with owner:%s, id: %s, money: %d", createAccount.Owner, id, createAccount.Money)
 	acc := entity.CreateAccount(createAccount.Owner, id, createAccount.Money)
 	if err := uc.es.Save(ctx, acc, eventstore.Options{}); err != nil {
 		return "", err
@@ -39,7 +43,10 @@ func (uc AccountUsecase) Deposit(ctx context.Context, cmd domain.DepositCommand)
 		return err
 	}
 
-	acc.Deposit(cmd.Amount)
+	log.WithFields(log.Fields{
+		"method": "AccountUsecase.Deposit",
+	}).Infof("Depositing id: %s, money: %d", cmd.ID, cmd.Money)
+	acc.Deposit(cmd.Money)
 
 	if err := uc.es.Save(ctx, acc, eventstore.Options{}); err != nil {
 		return err
@@ -54,7 +61,10 @@ func (uc AccountUsecase) Withdraw(ctx context.Context, cmd domain.WithdrawComman
 		return err
 	}
 
-	if acc.Withdraw(cmd.Amount) {
+	log.WithFields(log.Fields{
+		"method": "AccountUsecase.Withdraw",
+	}).Infof("Depositing id: %s, money: %d", cmd.ID, cmd.Money)
+	if acc.Withdraw(cmd.Money) {
 		return uc.es.Save(ctx, acc, eventstore.Options{})
 	}
 

@@ -47,6 +47,8 @@ services:
       - TOPIC=accounts
     networks:
       - my-network
+    ports:
+      - 3000:3000
 
   database:
     image: postgres:12.3-alpine
@@ -89,6 +91,18 @@ services:
     ports:
       - 9200:9200
       - 9300:9300
+    networks:
+      - my-network
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:7.8.0
+    depends_on:
+      - elastic
+    ports:
+      - 5601:5601
+    environment:
+      ELASTICSEARCH_URL: http://elastic:9200
+      ELASTICSEARCH_HOSTS: http://elastic:9200
     networks:
       - my-network
 volumes:

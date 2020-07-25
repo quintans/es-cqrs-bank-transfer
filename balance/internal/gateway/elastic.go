@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/elastic/go-elasticsearch/v7"
@@ -12,41 +15,77 @@ import (
 )
 
 const (
-	index = "balance"
+	index      = "balance"
+	hitsField  = "hits"
+	ownerField = "owner"
+	source     = "_source"
+	hits       = "hits"
 )
 
-type esResponse struct {
+type GetResponse struct {
 	ID      string      `json:"_id"`
 	Version int64       `json:"_version"`
 	Source  interface{} `json:"_source"`
+}
+
+type SearchResponse struct {
+	Hits Hits `json:"hits"`
+}
+
+type Hits struct {
 }
 
 type BalanceRepository struct {
 	Client *elasticsearch.Client
 }
 
-func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID string) (string, error) {
-	req := esapi.GetRequest{
-		Index:      index,
-		DocumentID: aggregateID,
+func (b BalanceRepository) GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.Balance, error) {
+	req := esapi.SearchRequest{
+		Index: []string{index},
+		Sort:  []string{ownerField + ".keyword:asc"},
 	}
 	res, err := req.Do(ctx, b.Client)
 	if err != nil {
-		return "", fmt.Errorf("Error getting response for GetRequest: %w", err)
+		return []entity.Balance{}, fmt.Errorf("Error getting response for SearchRequest: %w", err)
 	}
 	defer res.Body.Close()
 
-	if res.IsError() {
-		return "", fmt.Errorf("[%s] Error getting document ID=%s", res.Status(), aggregateID)
+	mapResp := map[string]interface{}{}
+	if err := json.NewDecoder(res.Body).Decode(&mapResp); err != nil {
+		log.Fatalf("Error parsing SearchRequest response body: %s", err)
 	}
-	// Deserialize the response into a map.
-	r := esResponse{
-		Source: &entity.Balance{},
+	balances := []entity.Balance{}
+	// Iterate the document "hits" returned by API call
+	for _, hit := range mapResp[hits].(map[string]interface{})[hits].([]interface{}) {
+		doc := hit.(map[string]interface{})
+		balances = append(balances, sourceToBalance(doc))
 	}
-	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
-		return "", fmt.Errorf("Error parsing the response body for GetRequest: %w", err)
+
+	return balances, nil
+}
+
+func sourceToBalance(doc map[string]interface{}) entity.Balance {
+	source := doc[source].(map[string]interface{})
+	b := entity.Balance{}
+	b.ID = doc["_id"].(string)
+	if v, ok := doc["_version"]; ok {
+		b.Version = int(v.(float64))
 	}
-	balance := r.Source.(*entity.Balance)
+	if v, ok := source["balance"]; ok {
+		fmt.Println(reflect.TypeOf(v))
+		b.Balance = int64(v.(float64))
+	}
+	if v, ok := source["owner"]; ok {
+		b.Owner = v.(string)
+	}
+	return b
+}
+
+func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID string) (string, error) {
+	balance, err := b.GetByID(ctx, aggregateID)
+	if err != nil {
+		return "", err
+	}
 	return balance.EventID, nil
 }
 
@@ -73,6 +112,35 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), balance.ID)
 	}
 	return nil
+}
+
+func (b BalanceRepository) GetByID(ctx context.Context, aggregateID string) (entity.Balance, error) {
+	req := esapi.GetRequest{
+		Index:      index,
+		DocumentID: aggregateID,
+	}
+	res, err := req.Do(ctx, b.Client)
+	if err != nil {
+		return entity.Balance{}, fmt.Errorf("Error getting response for GetRequest: %w", err)
+	}
+	defer res.Body.Close()
+
+	if res.StatusCode == http.StatusNotFound {
+		return entity.Balance{}, nil
+	}
+
+	if res.IsError() {
+		return entity.Balance{}, fmt.Errorf("[%s] Error getting document ID=%s", res.Status(), aggregateID)
+	}
+	// Deserialize the response into a map.
+	r := GetResponse{
+		Source: &entity.Balance{},
+	}
+	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
+		return entity.Balance{}, fmt.Errorf("Error parsing the response body for GetRequest: %w", err)
+	}
+	balance := r.Source.(*entity.Balance)
+	return *balance, nil
 }
 
 func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) error {

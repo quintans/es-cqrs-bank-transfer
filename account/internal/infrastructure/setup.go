@@ -2,13 +2,13 @@ package infrastructure
 
 import (
 	"fmt"
-	"log"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/usecase"
 	"github.com/quintans/eventstore"
+	log "github.com/sirupsen/logrus"
 )
 
 type Config struct {
@@ -50,7 +50,6 @@ func StartRestServer(c controller.Controller, port int) {
 	e.Use(middleware.Recover())
 
 	// Routes
-	e.GET("/", c.Hello)
 	e.POST("/create", c.Create)
 	e.POST("/deposit", c.Deposit)
 	e.POST("/withdraw", c.Withdraw)

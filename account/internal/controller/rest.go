@@ -18,11 +18,6 @@ func NewController(accountUc domain.AccountUsecaser) Controller {
 	}
 }
 
-// Hello is the greeting handler
-func (ctl Controller) Hello(c echo.Context) error {
-	return c.String(http.StatusOK, "Hello, World!")
-}
-
 // Create calls the usecase to crete a new account
 func (ctl Controller) Create(c echo.Context) error {
 	cmd := domain.CreateCommand{}

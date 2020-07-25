@@ -1,0 +1,20 @@
+package controller
+
+import (
+	"net/http"
+
+	"github.com/labstack/echo/v4"
+	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
+)
+
+type RestController struct {
+	BalanceUsecase domain.BalanceUsecase
+}
+
+func (ctl RestController) ListAll(c echo.Context) error {
+	docs, err := ctl.BalanceUsecase.ListAll(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, docs)
+}

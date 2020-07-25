@@ -10,3 +10,7 @@ type Balance struct {
 	Balance int64        `json:"balance,omitempty"`
 	Owner   string       `json:"owner,omitempty"`
 }
+
+func (b Balance) IsZero() bool {
+	return b == Balance{}
+}

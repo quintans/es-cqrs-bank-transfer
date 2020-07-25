@@ -1,11 +1,16 @@
 package main
 
 import (
-	"log"
+	"os"
 
 	"github.com/caarlos0/env/v6"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/infrastructure"
+	log "github.com/sirupsen/logrus"
 )
+
+func init() {
+	log.SetOutput(os.Stdout)
+}
 
 func main() {
 	cfg := &infrastructure.Config{}

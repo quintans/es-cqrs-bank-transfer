@@ -10,19 +10,19 @@ type CreateCommand struct {
 }
 
 type DepositCommand struct {
-	ID     string `json:"id"`
-	Amount int64  `json:"amount"`
+	ID    string `json:"id"`
+	Money int64  `json:"money"`
 }
 
 type WithdrawCommand struct {
-	ID     string `json:"id"`
-	Amount int64  `json:"amount"`
+	ID    string `json:"id"`
+	Money int64  `json:"money"`
 }
 
 type TransferCommand struct {
-	From   string `json:"from"`
-	To     string `json:"to"`
-	Amount int64  `json:"amount"`
+	From  string `json:"from"`
+	To    string `json:"to"`
+	Money int64  `json:"money"`
 }
 
 type AccountUsecaser interface {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -15,11 +14,13 @@ import (
 	_ "github.com/lib/pq"
 	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/poller"
+	log "github.com/sirupsen/logrus"
 )
 
 type Config struct {
 	ConfigDb
 	ConfigPulsar
+	ConfigPoller
 }
 
 type ConfigDb struct {
@@ -33,6 +34,14 @@ type ConfigDb struct {
 type ConfigPulsar struct {
 	PulsarAddress string `env:"PULSAR_ADDRESS"`
 	Topic         string `env:"TOPIC" envDefault:"accounts"`
+}
+
+type ConfigPoller struct {
+	PollInterval time.Duration `env:"POLL_INTERVAL" envDefault:"500ms"`
+}
+
+func init() {
+	log.SetOutput(os.Stdout)
 }
 
 func main() {
@@ -54,20 +63,21 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	lm := poller.New(tracker)
+	lm := poller.New(tracker, poller.WithPollInterval(cfg.PollInterval))
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		sig := <-sigs
-		fmt.Println(sig)
-		cancel()
+		log.Printf("Polling every: %s\n", cfg.PollInterval)
+		lm.Forward(ctx, p)
 	}()
 
-	lm.Forward(ctx, p)
+	<-quit
+	cancel()
+
 }
 
 const (
@@ -132,9 +142,12 @@ func (p *PulsarSink) LastEventID(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("Unable to read last message in topic %s: %w", p.topic, err)
 		}
 		eid := msg.Properties()[EventIDKey]
+
+		log.Printf("Will start polling from last event ID: %s\n", eid)
 		return eid, nil
 	}
 
+	log.Println("Will start polling from the begginning")
 	return "", nil
 }
 
@@ -145,6 +158,10 @@ func (p *PulsarSink) Send(ctx context.Context, e common.Event) error {
 		return nil
 	}
 
+	log.WithFields(log.Fields{
+		"method":     "PulsarSink.Send",
+		"EventIDKey": EventIDKey,
+	}).Infof("Sending message to pulsar: %s", string(b))
 	_, err = p.producer.Send(context.Background(), &pulsar.ProducerMessage{
 		Payload: b,
 		Properties: map[string]string{
