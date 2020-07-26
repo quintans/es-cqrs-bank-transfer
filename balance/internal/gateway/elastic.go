@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"reflect"
 	"strings"
 
 	"github.com/elastic/go-elasticsearch/v7"
@@ -69,10 +68,9 @@ func sourceToBalance(doc map[string]interface{}) entity.Balance {
 	b := entity.Balance{}
 	b.ID = doc["_id"].(string)
 	if v, ok := doc["_version"]; ok {
-		b.Version = int(v.(float64))
+		b.Version = int64(v.(float64))
 	}
 	if v, ok := source["balance"]; ok {
-		fmt.Println(reflect.TypeOf(v))
 		b.Balance = int64(v.(float64))
 	}
 	if v, ok := source["owner"]; ok {
@@ -90,6 +88,11 @@ func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID string) (
 }
 
 func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Balance) error {
+	// we don't want to repeat the ID and version values in the doc
+	docID := balance.ID
+	balance.ID = ""
+	balance.Version = 0
+
 	var s strings.Builder
 	if err := json.NewEncoder(&s).Encode(balance); err != nil {
 		return err
@@ -97,7 +100,7 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 
 	req := esapi.IndexRequest{
 		Index:      index,
-		DocumentID: balance.ID,
+		DocumentID: docID,
 		Body:       strings.NewReader(s.String()),
 		Refresh:    "true",
 	}
@@ -140,10 +143,17 @@ func (b BalanceRepository) GetByID(ctx context.Context, aggregateID string) (ent
 		return entity.Balance{}, fmt.Errorf("Error parsing the response body for GetRequest: %w", err)
 	}
 	balance := r.Source.(*entity.Balance)
+	balance.ID = r.ID
+	balance.Version = r.Version
 	return *balance, nil
 }
 
 func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) error {
+	// we don't want to repeat the ID and version values in the doc
+	docID := balance.ID
+	balance.ID = ""
+	balance.Version = 0
+
 	var s strings.Builder
 	if err := json.NewEncoder(&s).Encode(balance); err != nil {
 		return err
@@ -151,7 +161,7 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 
 	req := esapi.UpdateRequest{
 		Index:      index,
-		DocumentID: balance.ID,
+		DocumentID: docID,
 		Body:       strings.NewReader(s.String()),
 		Refresh:    "true",
 	}
