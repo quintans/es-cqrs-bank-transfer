@@ -71,13 +71,12 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	go func() {
-		log.Printf("Polling every: %s\n", cfg.PollInterval)
+		log.Printf("Polling every: %s", cfg.PollInterval)
 		lm.Forward(ctx, p)
 	}()
 
 	<-quit
 	cancel()
-
 }
 
 const (
@@ -85,7 +84,7 @@ const (
 )
 
 type PulsarSink struct {
-	topic    string
+	config   ConfigPulsar
 	client   pulsar.Client
 	producer pulsar.Producer
 }
@@ -108,7 +107,7 @@ func NewPulsarSink(cfg ConfigPulsar) (*PulsarSink, error) {
 	}
 
 	return &PulsarSink{
-		topic:    cfg.Topic,
+		config:   cfg,
 		client:   client,
 		producer: producer,
 	}, nil
@@ -126,24 +125,33 @@ func (p *PulsarSink) Close() {
 
 // LastEventID gets the last event sent to pulsar
 func (p *PulsarSink) LastEventID(ctx context.Context) (string, error) {
-	reader, err := p.client.CreateReader(pulsar.ReaderOptions{
-		Topic:                   p.topic,
+	// 2020-07-26: A separate client is created for reading, otherwise the producer will hang
+	client, err := pulsar.NewClient(pulsar.ClientOptions{
+		URL: "pulsar://" + p.config.PulsarAddress,
+	})
+	if err != nil {
+		return "", fmt.Errorf("Could not instantiate Pulsar client for reading: %w", err)
+	}
+	defer client.Close()
+
+	reader, err := client.CreateReader(pulsar.ReaderOptions{
+		Topic:                   p.config.Topic,
 		StartMessageID:          pulsar.LatestMessageID(),
 		StartMessageIDInclusive: true,
 	})
 	if err != nil {
-		return "", fmt.Errorf("Unable to create reader for topic %s: %w", p.topic, err)
+		return "", fmt.Errorf("Unable to create reader for topic %s: %w", p.config.Topic, err)
 	}
 	defer reader.Close()
 
 	if reader.HasNext() {
 		msg, err := reader.Next(ctx)
 		if err != nil {
-			return "", fmt.Errorf("Unable to read last message in topic %s: %w", p.topic, err)
+			return "", fmt.Errorf("Unable to read last message in topic %s: %w", p.config.Topic, err)
 		}
 		eid := msg.Properties()[EventIDKey]
 
-		log.Printf("Will start polling from last event ID: %s\n", eid)
+		log.Printf("Will start polling from last event ID: %s", eid)
 		return eid, nil
 	}
 
@@ -162,7 +170,7 @@ func (p *PulsarSink) Send(ctx context.Context, e common.Event) error {
 		"method":     "PulsarSink.Send",
 		"EventIDKey": EventIDKey,
 	}).Infof("Sending message to pulsar: %s", string(b))
-	_, err = p.producer.Send(context.Background(), &pulsar.ProducerMessage{
+	_, err = p.producer.Send(ctx, &pulsar.ProducerMessage{
 		Payload: b,
 		Properties: map[string]string{
 			EventIDKey: e.ID,
