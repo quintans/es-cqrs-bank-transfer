@@ -112,7 +112,7 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), balance.ID)
+		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), docID)
 	}
 	return nil
 }
@@ -155,9 +155,11 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 	balance.Version = 0
 
 	var s strings.Builder
+	s.WriteString(`{"doc":`)
 	if err := json.NewEncoder(&s).Encode(balance); err != nil {
 		return err
 	}
+	s.WriteString("}")
 
 	req := esapi.UpdateRequest{
 		Index:      index,
@@ -173,7 +175,7 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), balance.ID)
+		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), docID)
 	}
 	return nil
 }
