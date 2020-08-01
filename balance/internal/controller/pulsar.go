@@ -4,39 +4,47 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
-	"github.com/quintans/eventstore/common"
+	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
+	log "github.com/sirupsen/logrus"
 )
 
-type PulsarController struct {
-	BalanceUsecase domain.BalanceUsecase
-}
-
-func (p PulsarController) AccountCreated(ctx context.Context, m domain.Metadata, e common.Event) error {
-	ac := event.AccountCreated{}
-	if err := json.Unmarshal(e.Body, &ac); err != nil {
-		return err
-	}
-	return p.BalanceUsecase.AccountCreated(ctx, m, ac)
-}
-
-func (p PulsarController) MoneyDeposited(ctx context.Context, m domain.Metadata, e common.Event) error {
-	ac := event.MoneyDeposited{}
-	if err := json.Unmarshal(e.Body, &ac); err != nil {
-		return err
-	}
-	return p.BalanceUsecase.MoneyDeposited(ctx, m, ac)
-}
-
-func (p PulsarController) MoneyWithdrawn(ctx context.Context, m domain.Metadata, e common.Event) error {
-	ac := event.MoneyWithdrawn{}
-	if err := json.Unmarshal(e.Body, &ac); err != nil {
-		return err
-	}
-	return p.BalanceUsecase.MoneyWithdrawn(ctx, m, ac)
-}
+const (
+	NotificationHandlerName  = "NotificationHandler"
+	NotificationSubscription = "notifications-balance"
+)
 
 type NotificationController struct {
 	PulsarRegistry *PulsarRegistry
+}
+
+func (p NotificationController) GetName() string {
+	return NotificationHandlerName
+}
+
+func (p NotificationController) GetTopic() string {
+	return gateway.NotificationTopic
+}
+
+func (p NotificationController) GetSubscription() string {
+	return NotificationSubscription
+}
+
+func (p NotificationController) Handler(ctx context.Context, msg pulsar.Message) error {
+	b := msg.Payload()
+	n := domain.Notification{}
+	json.Unmarshal(b, &n)
+	reg := p.PulsarRegistry.Get(n.Projection)
+	if reg == nil {
+		log.WithField("projection", n.Projection).
+			Info("Projection not found while handling notification")
+		return nil
+	}
+	if n.Action == domain.Start {
+		go reg.Start(ctx)
+	} else {
+		reg.Stop()
+	}
+	return nil
 }

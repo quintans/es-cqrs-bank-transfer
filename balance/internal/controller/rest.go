@@ -18,3 +18,11 @@ func (ctl RestController) ListAll(c echo.Context) error {
 	}
 	return c.JSON(http.StatusOK, docs)
 }
+
+func (ctl RestController) RebuildBalance(c echo.Context) error {
+	err := ctl.BalanceUsecase.RebuildBalance(c.Request().Context())
+	if err != nil {
+		return err
+	}
+	return c.NoContent(http.StatusOK)
+}

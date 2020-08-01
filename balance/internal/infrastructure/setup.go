@@ -75,39 +75,25 @@ func Setup(cfg Config) {
 		Client: es,
 	}
 
-	balanceUC := usecase.BalanceUsecase{
-		BalanceRepository: repo,
-	}
-
-	pulsarCtrl := controller.PulsarController{
-		BalanceUsecase: balanceUC,
-	}
-
-	restCtrl := controller.RestController{
-		BalanceUsecase: balanceUC,
-	}
-
 	ctx, cancel := context.WithCancel(context.Background())
 	// poller
 	esRepo := poller.NewGrpcRepository(cfg.EsAddress)
 
+	latch := locks.NewCountDownLatch()
+	latch.Add(1)
+	client := StartPulsarClient(ctx, latch, cfg)
 	mess := gateway.Messenger{
+		Client:        client,
 		PulsarAddress: cfg.PulsarAddress,
 	}
 
-	latch := locks.NewCountDownLatch()
-	latch.Add(2)
-	go StartRestServer(ctx, latch, restCtrl, cfg.ApiPort)
-	registry := StartPulsarListener(ctx, latch, cfg, pulsarCtrl)
-
-	projectionBalance := controller.ProjectionBalance{
-		Topic:             cfg.Topic,
-		Ctrl:              pulsarCtrl,
+	balanceUC := usecase.BalanceUsecase{
 		BalanceRepository: repo,
-		EsRepo:            esRepo,
 		Messenger:         mess,
+		Topic:             cfg.Topic,
 	}
-	regPB := registry.Register(projectionBalance)
+
+	registry := controller.NewPulsarRegistry(client)
 
 	// acquire distributed lock
 	pool, err := redisPool(cfg.RedisAddresses)
@@ -116,7 +102,29 @@ func Setup(cfg Config) {
 	}
 	lock := redsync.New(pool)
 
-	go monitor(ctx, regPB, lock, cfg.LockExpiry)
+	regPB := registry.RegisterReader(controller.ProjectionBalance{
+		Topic:          cfg.Topic,
+		EsRepo:         esRepo,
+		BalanceUsecase: balanceUC,
+	})
+	go monitorLock(ctx, regPB, lock, cfg.LockExpiry)
+
+	notif := registry.RegisterSubscription(controller.NotificationController{
+		PulsarRegistry: registry,
+	})
+	go func() {
+		err := notif.Start(ctx)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}()
+
+	restCtrl := controller.RestController{
+		BalanceUsecase: balanceUC,
+	}
+
+	latch.Add(1)
+	go StartRestServer(ctx, latch, restCtrl, cfg.ApiPort)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
@@ -137,7 +145,7 @@ func redisPool(addrs []string) ([]redsync.Pool, error) {
 	return pool, nil
 }
 
-func monitor(ctx context.Context, ph *controller.PulsarHandler, lock *redsync.Redsync, expiry time.Duration) {
+func monitorLock(ctx context.Context, ph *controller.PulsarHandler, lock *redsync.Redsync, expiry time.Duration) {
 	latch := Latch{
 		Name:   ph.GetName(),
 		Expiry: expiry,
@@ -147,12 +155,11 @@ func monitor(ctx context.Context, ph *controller.PulsarHandler, lock *redsync.Re
 	go latch.Start(ctx)
 }
 
-func StartPulsarListener(
+func StartPulsarClient(
 	ctx context.Context,
 	latch *locks.CountDownLatch,
 	cfg Config,
-	ctrl controller.PulsarController,
-) *controller.PulsarRegistry {
+) pulsar.Client {
 	logger := log.WithFields(log.Fields{
 		"method": "PulsarListener",
 	})
@@ -164,8 +171,6 @@ func StartPulsarListener(
 		log.Fatalf("Could not instantiate Pulsar client: %v", err)
 	}
 
-	pr := controller.NewPulsarRegistry(client)
-
 	go func() {
 		<-ctx.Done()
 		logger.Info("Shutting down PulsarListener")
@@ -173,7 +178,7 @@ func StartPulsarListener(
 		latch.Done()
 	}()
 
-	return pr
+	return client
 }
 
 func StartRestServer(ctx context.Context, latch *locks.CountDownLatch, c controller.RestController, port int) {
@@ -186,6 +191,7 @@ func StartRestServer(ctx context.Context, latch *locks.CountDownLatch, c control
 
 	// Routes
 	e.GET("/", c.ListAll)
+	e.GET("/balance/rebuild", c.RebuildBalance)
 
 	go func() {
 		<-ctx.Done()

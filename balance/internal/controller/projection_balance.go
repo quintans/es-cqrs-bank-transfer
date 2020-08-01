@@ -14,19 +14,13 @@ import (
 )
 
 type ProjectionBalance struct {
-	Topic             string
-	Ctrl              PulsarController
-	BalanceRepository domain.BalanceRepository
-	EsRepo            poller.Repository
-	Messenger         domain.Messenger
-}
-
-func NewProjectionBalance(topic string, repo domain.BalanceRepository, EsRepo poller.Repository, Messenger domain.Messenger) ProjectionBalance {
-	return ProjectionBalance{}
+	Topic          string
+	EsRepo         poller.Repository
+	BalanceUsecase domain.BalanceUsecase
 }
 
 func (p ProjectionBalance) GetName() string {
-	return "ProjectionBalance"
+	return domain.ProjectionBalance
 }
 
 func (p ProjectionBalance) GetTopic() string {
@@ -34,33 +28,30 @@ func (p ProjectionBalance) GetTopic() string {
 }
 
 func (p ProjectionBalance) Boot(ctx context.Context) (pulsar.MessageID, error) {
-	// get the latest event ID from the eventstore
-	eventID1, err := p.BalanceRepository.GetMaxEventID(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("Could not get last event ID: %w", err)
-	}
-
+	// get the latest event ID from the DB
 	// get the last messageID from the MQ
-	messageID, eventID2, err := p.Messenger.GetLastMessageID(ctx, p.Topic)
+	lastIds, err := p.BalanceUsecase.GetLastIDs(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("Could not get last message ID: %w", err)
+		return nil, fmt.Errorf("Could not get last IDs: %w", err)
 	}
 
-	// get all events from the ES in between
-	esPoller := poller.New(p.EsRepo, poller.WithFilter(common.Filter{
-		AggregateTypes: []string{event.AggregateType_Account},
-	}))
+	if lastIds.MqEventID > lastIds.DbEventID {
+		// process all events from the ES in between
+		esPoller := poller.New(p.EsRepo, poller.WithFilter(common.Filter{
+			AggregateTypes: []string{event.AggregateType_Account},
+		}))
 
-	_, err = esPoller.ReplayFromUntil(ctx, func(ctx context.Context, e common.Event) error {
-		m := domain.Metadata{AggregateID: e.AggregateID, EventID: e.ID}
-		return routeEventBalanceProjection(ctx, m, e, p.Ctrl)
-	}, eventID1, eventID2)
-	if err != nil {
-		return nil, fmt.Errorf("Could not replay all events: %w", err)
+		_, err = esPoller.ReplayFromUntil(ctx, func(ctx context.Context, e common.Event) error {
+			m := domain.Metadata{AggregateID: e.AggregateID, EventID: e.ID}
+			return p.routeEventBalanceProjection(ctx, m, e)
+		}, lastIds.DbEventID, lastIds.MqEventID)
+		if err != nil {
+			return nil, fmt.Errorf("Could not replay all events: %w", err)
+		}
 	}
 
 	// resume reading from the MQ
-	id, err := pulsar.DeserializeMessageID(messageID)
+	id, err := pulsar.DeserializeMessageID(lastIds.MqMessageID)
 	if err != nil {
 		return nil, fmt.Errorf("Could not deserialize message ID: %w", err)
 	}
@@ -68,32 +59,31 @@ func (p ProjectionBalance) Boot(ctx context.Context) (pulsar.MessageID, error) {
 
 }
 
-func (p ProjectionBalance) Handler(c context.Context, rm pulsar.ReaderMessage) error {
-	return routeMessageBalanceProjection(c, rm, p.Ctrl)
+func (p ProjectionBalance) Handler(c context.Context, rm pulsar.Message) error {
+	return p.routeMessageBalanceProjection(c, rm)
 }
 
-func routeMessageBalanceProjection(ctx context.Context, rm pulsar.ReaderMessage, ctrl PulsarController) error {
+func (p ProjectionBalance) routeMessageBalanceProjection(ctx context.Context, rm pulsar.Message) error {
 	e, m := messageToEvent(rm)
-	return routeEventBalanceProjection(ctx, m, e, ctrl)
+	return p.routeEventBalanceProjection(ctx, m, e)
 }
 
-func routeEventBalanceProjection(ctx context.Context, m domain.Metadata, e common.Event, ctrl PulsarController) error {
+func (p ProjectionBalance) routeEventBalanceProjection(ctx context.Context, m domain.Metadata, e common.Event) error {
 	var err error
 	switch e.Kind {
 	case event.Event_AccountCreated:
-		err = ctrl.AccountCreated(context.Background(), m, e)
+		err = p.AccountCreated(context.Background(), m, e)
 	case event.Event_MoneyDeposited:
-		err = ctrl.MoneyDeposited(context.Background(), m, e)
+		err = p.MoneyDeposited(context.Background(), m, e)
 	case event.Event_MoneyWithdrawn:
-		err = ctrl.MoneyWithdrawn(context.Background(), m, e)
+		err = p.MoneyWithdrawn(context.Background(), m, e)
 	default:
 		log.Warnf("Unknown event type: %s\n", e.Kind)
 	}
 	return err
 }
 
-func messageToEvent(rm pulsar.ReaderMessage) (common.Event, domain.Metadata) {
-	msg := rm.Message
+func messageToEvent(msg pulsar.Message) (common.Event, domain.Metadata) {
 	p := msg.Payload()
 	e := common.Event{}
 	json.Unmarshal(p, &e)
@@ -102,4 +92,28 @@ func messageToEvent(rm pulsar.ReaderMessage) (common.Event, domain.Metadata) {
 		EventID:     e.ID,
 	}
 	return e, m
+}
+
+func (p ProjectionBalance) AccountCreated(ctx context.Context, m domain.Metadata, e common.Event) error {
+	ac := event.AccountCreated{}
+	if err := json.Unmarshal(e.Body, &ac); err != nil {
+		return err
+	}
+	return p.BalanceUsecase.AccountCreated(ctx, m, ac)
+}
+
+func (p ProjectionBalance) MoneyDeposited(ctx context.Context, m domain.Metadata, e common.Event) error {
+	ac := event.MoneyDeposited{}
+	if err := json.Unmarshal(e.Body, &ac); err != nil {
+		return err
+	}
+	return p.BalanceUsecase.MoneyDeposited(ctx, m, ac)
+}
+
+func (p ProjectionBalance) MoneyWithdrawn(ctx context.Context, m domain.Metadata, e common.Event) error {
+	ac := event.MoneyWithdrawn{}
+	if err := json.Unmarshal(e.Body, &ac); err != nil {
+		return err
+	}
+	return p.BalanceUsecase.MoneyWithdrawn(ctx, m, ac)
 }

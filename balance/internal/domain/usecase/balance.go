@@ -18,6 +18,8 @@ var (
 
 type BalanceUsecase struct {
 	BalanceRepository domain.BalanceRepository
+	Messenger         domain.Messenger
+	Topic             string
 }
 
 func (b BalanceUsecase) ListAll(ctx context.Context) ([]entity.Balance, error) {
@@ -99,4 +101,47 @@ func (b BalanceUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry, m
 	}
 
 	return false, nil
+}
+
+func (b BalanceUsecase) GetLastIDs(ctx context.Context) (domain.LastIDs, error) {
+	// get the latest event ID from the eventstore
+	eventID1, err := b.BalanceRepository.GetMaxEventID(ctx)
+	if err != nil {
+		return domain.LastIDs{}, fmt.Errorf("Could not get last event ID: %w", err)
+	}
+
+	// get the last messageID from the MQ
+	messageID, eventID2, err := b.Messenger.GetLastMessageID(ctx, b.Topic)
+	if err != nil {
+		return domain.LastIDs{}, fmt.Errorf("Could not get last message ID: %w", err)
+	}
+
+	return domain.LastIDs{
+		DbEventID:   eventID1,
+		MqEventID:   eventID2,
+		MqMessageID: messageID,
+	}, nil
+}
+
+func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
+	// signals to stop the projection listener
+	err := b.Messenger.NotifyProjectionRegistry(ctx, domain.Notification{
+		Projection: domain.ProjectionBalance,
+		Action:     domain.Stop,
+	})
+	if err != nil {
+		return err
+	}
+
+	// recreate table
+	err = b.BalanceRepository.ClearAllData(ctx)
+	if err != nil {
+		return err
+	}
+
+	// signals to stop the projection listener
+	return b.Messenger.NotifyProjectionRegistry(ctx, domain.Notification{
+		Projection: domain.ProjectionBalance,
+		Action:     domain.Start,
+	})
 }

@@ -213,3 +213,34 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 	}
 	return nil
 }
+
+func (b BalanceRepository) ClearAllData(ctx context.Context) error {
+	// delete index
+	del := esapi.DeleteRequest{
+		Index:   index,
+		Refresh: "true",
+	}
+	resDel, err := del.Do(ctx, b.Client)
+	if err != nil {
+		return fmt.Errorf("Error getting response for ClearAllData(balance): %w", err)
+	}
+	defer resDel.Body.Close()
+	if resDel.IsError() {
+		return fmt.Errorf("[%s] Error deleting index", resDel.Status())
+	}
+
+	// create index
+	req := esapi.IndicesCreateRequest{
+		Index: index,
+	}
+	res, err := req.Do(ctx, b.Client)
+	if err != nil {
+		return fmt.Errorf("Error getting response for ClearAllData(balance): %w", err)
+	}
+	defer res.Body.Close()
+	if res.IsError() {
+		return fmt.Errorf("[%s] Error creating index", res.Status())
+	}
+
+	return nil
+}
