@@ -22,7 +22,12 @@ type BalanceUsecase interface {
 type BalanceRepository interface {
 	GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.Balance, error)
 	GetEventID(ctx context.Context, aggregateID string) (string, error)
+	GetMaxEventID(ctx context.Context) (string, error)
 	CreateAccount(ctx context.Context, balance entity.Balance) error
 	GetByID(ctx context.Context, aggregateID string) (entity.Balance, error)
 	Update(ctx context.Context, balance entity.Balance) error
+}
+
+type Messenger interface {
+	GetLastMessageID(ctx context.Context, topic string) ([]byte, string, error)
 }

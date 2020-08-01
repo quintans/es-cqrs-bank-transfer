@@ -75,5 +75,6 @@ curl http://localhost:3000/
 
 ### Observations
 
-We use Pulsar consumers with `key_shared` to load balance into as many consumers has we would wish.
-> With `key_shared`, the same aggregate is always handled by the same instance
+To be able to able to rebuild a projection, each projection will only be running in one instance. When a projection needs to be rebuild, a notification will be sent to the MQ. The projection that the notification refers to, will stop and will replay all the events, by requesting them to the event store.
+
+Since the poller still keeps producing messages, when need to make sure that we don't lose messages when we switch to listening to messages from the MQ. For that, when all the events from the ES for the projection are all processed, we will ask the MQ for the last message, process once more the events from the last event of the replay, process them and then switch to the MQ. Since the projectors are idempotent it will be ok.

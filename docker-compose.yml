@@ -12,8 +12,8 @@ services:
     depends_on:
       - database
     environment:
-      - DB_HOST=database
-      - DB_NAME=accounts
+      - ES_HOST=database
+      - ES_NAME=accounts
       - API_PORT=8000
     networks:
       - my-network
@@ -28,8 +28,8 @@ services:
       - database
       - pulsar
     environment:
-      - DB_HOST=database
-      - DB_NAME=accounts
+      - ES_HOST=database
+      - ES_NAME=accounts
       - PULSAR_ADDRESS=pulsar:6650
       - TOPIC=accounts
     networks:
@@ -45,6 +45,7 @@ services:
     environment:
       - PULSAR_ADDRESS=pulsar:6650
       - TOPIC=accounts
+      - REDIS_ADDRESSES=redis:6379
     networks:
       - my-network
     ports:
@@ -105,6 +106,14 @@ services:
       ELASTICSEARCH_HOSTS: http://elastic:9200
     networks:
       - my-network
+
+  redis:
+    image: "redis:alpine"
+    ports:
+      - "6379:6379"
+    networks:
+      - my-network
+
 volumes:
   pulsardata:
   pulsarconf:

@@ -2,23 +2,23 @@ package infrastructure
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/signal"
-	"sync"
 	"syscall"
 	"time"
 
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/elastic/go-elasticsearch/v7"
+	"github.com/go-redsync/redsync"
+	"github.com/gomodule/redigo/redis"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
-	"github.com/quintans/eventstore/common"
+	"github.com/quintans/eventstore/poller"
+	"github.com/quintans/toolkit/locks"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -28,9 +28,33 @@ type Config struct {
 	Topic            string   `env:"TOPIC" envDefault:"accounts"`
 	Subscription     string   `env:"SUBSCRIPTION" envDefault:"accounts-subscription"`
 	ElasticAddresses []string `env:"ES_ADDRESSES" envSeparator:","`
+	ConfigEs
+	ConfigPoller
+	ConfigRedis
+	LockExpiry time.Duration `env:"LOCK_EXPIRY" envDefault:"20s"`
 }
 
-func Setup(cfg *Config) {
+type ConfigEs struct {
+	EsAddress string `env:"ES_ADDRESS"`
+}
+
+type ConfigPoller struct {
+	PollInterval time.Duration `env:"POLL_INTERVAL" envDefault:"500ms"`
+}
+
+type ConfigRedis struct {
+	RedisAddresses []string `env:"REDIS_ADDRESSES" envSeparator:","`
+}
+
+type RedisPool struct {
+	Conn redis.Conn
+}
+
+func (rp RedisPool) Get() redis.Conn {
+	return rp.Conn
+}
+
+func Setup(cfg Config) {
 	escfg := elasticsearch.Config{
 		Addresses: cfg.ElasticAddresses,
 	}
@@ -63,35 +87,72 @@ func Setup(cfg *Config) {
 		BalanceUsecase: balanceUC,
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+	// poller
+	esRepo := poller.NewGrpcRepository(cfg.EsAddress)
+
+	mess := gateway.Messenger{
+		PulsarAddress: cfg.PulsarAddress,
+	}
+
+	latch := locks.NewCountDownLatch()
+	latch.Add(2)
+	go StartRestServer(ctx, latch, restCtrl, cfg.ApiPort)
+	registry := StartPulsarListener(ctx, latch, cfg, pulsarCtrl)
+
+	projectionBalance := controller.ProjectionBalance{
+		Topic:             cfg.Topic,
+		Ctrl:              pulsarCtrl,
+		BalanceRepository: repo,
+		EsRepo:            esRepo,
+		Messenger:         mess,
+	}
+	regPB := registry.Register(projectionBalance)
+
+	// acquire distributed lock
+	pool, err := redisPool(cfg.RedisAddresses)
+	if err != nil {
+		log.Fatal(err)
+	}
+	lock := redsync.New(pool)
+
+	go monitor(ctx, regPB, lock, cfg.LockExpiry)
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	wg := &sync.WaitGroup{}
-	wg.Add(2)
-	go StartPulsarListener(ctx, wg, cfg, pulsarCtrl)
-	go StartRestServer(ctx, wg, restCtrl, cfg.ApiPort)
-
 	<-quit
 	cancel()
-	Wait(wg, 3*time.Second)
+	latch.WaitWithTimeout(3 * time.Second)
 }
 
-func Wait(wg *sync.WaitGroup, timeout time.Duration) {
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-	case <-time.After(timeout):
+func redisPool(addrs []string) ([]redsync.Pool, error) {
+	pool := make([]redsync.Pool, len(addrs))
+	for k, v := range addrs {
+		conn, err := redis.Dial("tcp", v)
+		if err != nil {
+			return nil, err
+		}
+		pool[k] = RedisPool{Conn: conn}
 	}
+	return pool, nil
 }
 
-func StartPulsarListener(ctx context.Context, wg *sync.WaitGroup, cfg *Config, ctrl controller.PulsarController) {
+func monitor(ctx context.Context, ph *controller.PulsarHandler, lock *redsync.Redsync, expiry time.Duration) {
+	latch := Latch{
+		Name:   ph.GetName(),
+		Expiry: expiry,
+		Lock:   lock,
+		OnLock: ph.Start,
+	}
+	go latch.Start(ctx)
+}
+
+func StartPulsarListener(
+	ctx context.Context,
+	latch *locks.CountDownLatch,
+	cfg Config,
+	ctrl controller.PulsarController,
+) *controller.PulsarRegistry {
 	logger := log.WithFields(log.Fields{
 		"method": "PulsarListener",
 	})
@@ -103,57 +164,19 @@ func StartPulsarListener(ctx context.Context, wg *sync.WaitGroup, cfg *Config, c
 		log.Fatalf("Could not instantiate Pulsar client: %v", err)
 	}
 
-	defer client.Close()
-
-	channel := make(chan pulsar.ConsumerMessage, 100)
-
-	consumer, err := client.Subscribe(pulsar.ConsumerOptions{
-		Topic:            cfg.Topic,
-		SubscriptionName: cfg.Subscription,
-		Type:             pulsar.KeyShared,
-		MessageChannel:   channel,
-	})
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer consumer.Close()
+	pr := controller.NewPulsarRegistry(client)
 
 	go func() {
 		<-ctx.Done()
-		close(channel)
+		logger.Info("Shutting down PulsarListener")
+		client.Close()
+		latch.Done()
 	}()
 
-	for cm := range channel {
-		msg := cm.Message
-		p := msg.Payload()
-		e := common.Event{}
-		json.Unmarshal(p, &e)
-
-		logger.Infof("Received message: %s\n", string(msg.Payload()))
-
-		switch e.Kind {
-		case event.Event_AccountCreated:
-			err = ctrl.AccountCreated(context.Background(), e)
-		case event.Event_MoneyDeposited:
-			err = ctrl.MoneyDeposited(context.Background(), e)
-		case event.Event_MoneyWithdrawn:
-			err = ctrl.MoneyWithdrawn(context.Background(), e)
-		default:
-			log.Printf("Unknown event type: %s\n", e.Kind)
-		}
-
-		if err == nil {
-			consumer.Ack(msg)
-		} else {
-			logger.WithError(err).Errorf("Failed handling message")
-			consumer.Nack(msg)
-		}
-	}
-	log.Info("Shutting down PulsarListener")
-	wg.Done()
+	return pr
 }
 
-func StartRestServer(ctx context.Context, wg *sync.WaitGroup, c controller.RestController, port int) {
+func StartRestServer(ctx context.Context, latch *locks.CountDownLatch, c controller.RestController, port int) {
 	// Echo instance
 	e := echo.New()
 
@@ -178,5 +201,44 @@ func StartRestServer(ctx context.Context, wg *sync.WaitGroup, c controller.RestC
 	if err := e.Start(address); err != nil {
 		log.Info("shutting down the server")
 	}
-	wg.Done()
+	latch.Done()
+}
+
+type Latch struct {
+	Name   string
+	Expiry time.Duration
+	Lock   *redsync.Redsync
+	OnLock func(context.Context) error
+}
+
+func (l Latch) Start(ctx context.Context) {
+	ticker := time.NewTicker(l.Expiry / 2)
+	defer ticker.Stop()
+	for {
+		mu := l.Lock.NewMutex(l.Name, redsync.SetExpiry(l.Expiry), redsync.SetTries(2))
+		err := mu.Lock()
+		if err == nil {
+			ctx2, cancel := context.WithCancel(ctx)
+			l.OnLock(ctx2)
+			ok := true
+			for ok {
+				select {
+				// happens when the latch was cancelled
+				case <-ctx.Done():
+					cancel()
+					return
+				case <-ticker.C:
+					ok, _ = mu.Extend()
+				}
+			}
+			cancel() // happens when where not able to extend the lock
+		} else {
+			select {
+			// happens when the latch was cancelled
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}
 }

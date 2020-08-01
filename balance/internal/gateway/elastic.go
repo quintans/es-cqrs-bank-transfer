@@ -14,11 +14,12 @@ import (
 )
 
 const (
-	index      = "balance"
-	hitsField  = "hits"
-	ownerField = "owner"
-	source     = "_source"
-	hits       = "hits"
+	index        = "balance"
+	hitsField    = "hits"
+	ownerField   = "owner"
+	eventIDField = "event_id"
+	source       = "_source"
+	hits         = "hits"
 )
 
 type GetResponse struct {
@@ -85,6 +86,39 @@ func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID string) (
 		return "", err
 	}
 	return balance.EventID, nil
+}
+
+func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
+	size := 1
+	req := esapi.SearchRequest{
+		Index: []string{index},
+		Sort:  []string{eventIDField + ".keyword:desc"},
+		Size:  &size,
+	}
+	res, err := req.Do(ctx, b.Client)
+	if err != nil {
+		return "", fmt.Errorf("Error getting response for SearchRequest: %w", err)
+	}
+	defer res.Body.Close()
+
+	mapResp := map[string]interface{}{}
+	if err := json.NewDecoder(res.Body).Decode(&mapResp); err != nil {
+		log.Fatalf("Error parsing SearchRequest response body: %s", err)
+	}
+	balances := []entity.Balance{}
+	// Iterate the document "hits" returned by API call
+	for _, hit := range mapResp[hits].(map[string]interface{})[hits].([]interface{}) {
+		doc := hit.(map[string]interface{})
+		balances = append(balances, sourceToBalance(doc))
+	}
+
+	if len(balances) > 0 {
+		bal := balances[0]
+		return bal.EventID, nil
+	}
+
+	return "", nil
+
 }
 
 func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Balance) error {

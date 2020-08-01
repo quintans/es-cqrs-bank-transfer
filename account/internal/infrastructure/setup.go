@@ -13,16 +13,16 @@ import (
 
 type Config struct {
 	ApiPort           int    `env:"API_PORT" envDefault:"8000"`
-	DbUser            string `env:"DB_USER" envDefault:"root"`
-	DbPassword        string `env:"DB_PASSWORD" envDefault:"password"`
-	DbHost            string `env:"DB_HOST"`
-	DbPort            int    `env:"DB_PORT" envDefault:"5432"`
-	DbName            string `env:"DB_NAME" envDefault:"accounts"`
+	EsUser            string `env:"ES_USER" envDefault:"root"`
+	EsPassword        string `env:"ES_PASSWORD" envDefault:"password"`
+	EsHost            string `env:"ES_HOST"`
+	EsPort            int    `env:"ES_PORT" envDefault:"5432"`
+	EsName            string `env:"ES_NAME" envDefault:"accounts"`
 	SnapshotThreshold int    `env:"SNAPSHOT_THRESHOLD" envDefault:"5"`
 }
 
 func Setup(cfg *Config) {
-	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.DbUser, cfg.DbPassword, cfg.DbHost, cfg.DbPort, cfg.DbName)
+	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort, cfg.EsName)
 
 	// evenstore
 	r, err := eventstore.NewPgEsRepository(dbURL)

@@ -13,8 +13,8 @@ func init() {
 }
 
 func main() {
-	cfg := &infrastructure.Config{}
-	err := env.Parse(cfg)
+	cfg := infrastructure.Config{}
+	err := env.Parse(&cfg)
 	if err != nil {
 		log.Fatal(err)
 	}

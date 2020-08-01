@@ -9,9 +9,10 @@ const (
 )
 
 const (
-	Event_AccountCreated = "AccountCreated"
-	Event_MoneyWithdrawn = "MoneyWithdrawn"
-	Event_MoneyDeposited = "MoneyDeposited"
+	AggregateType_Account = "Account"
+	Event_AccountCreated  = "AccountCreated"
+	Event_MoneyWithdrawn  = "MoneyWithdrawn"
+	Event_MoneyDeposited  = "MoneyDeposited"
 )
 
 type AccountCreated struct {

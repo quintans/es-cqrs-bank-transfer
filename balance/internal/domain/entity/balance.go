@@ -1,16 +1,38 @@
 package entity
 
-import "github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+import (
+	"encoding/base64"
+
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+)
 
 type Balance struct {
-	ID      string       `json:"id,omitempty"`
-	Version int64        `json:"version,omitempty"`
-	EventID string       `json:"event_id,omitempty"`
+	ID      string       `json:"id"`
+	Version int64        `json:"version"`
+	EventID string       `json:"event_id"`
 	Status  event.Status `json:"status,omitempty"`
 	Balance int64        `json:"balance,omitempty"`
 	Owner   string       `json:"owner,omitempty"`
 }
 
 func (b Balance) IsZero() bool {
-	return b == Balance{}
+	return b.ID == ""
+}
+
+type Base64 []byte
+
+func (b Base64) MarshalJSON() ([]byte, error) {
+	sEnc := base64.StdEncoding.EncodeToString(b)
+	return []byte(`"` + sEnc + `"`), nil
+}
+
+func (b *Base64) UnmarshalJSON(data []byte) (err error) {
+	// strip quotes
+	data = data[1 : len(data)-1]
+	sDec, err := base64.StdEncoding.DecodeString(string(data))
+	if err != nil {
+		return err
+	}
+	*b = sDec
+	return nil
 }

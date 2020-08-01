@@ -18,17 +18,18 @@ import (
 )
 
 type Config struct {
-	ConfigDb
+	GrpcAddress string `env:"GRPC_ADDRESS" envDefault:":3000"`
+	ConfigEs
 	ConfigPulsar
 	ConfigPoller
 }
 
-type ConfigDb struct {
-	DbUser     string `env:"DB_USER" envDefault:"root"`
-	DbPassword string `env:"DB_PASSWORD" envDefault:"password"`
-	DbHost     string `env:"DB_HOST"`
-	DbPort     int    `env:"DB_PORT" envDefault:"5432"`
-	DbName     string `env:"DB_NAME" envDefault:"accounts"`
+type ConfigEs struct {
+	EsUser     string `env:"ES_USER" envDefault:"root"`
+	EsPassword string `env:"ES_PASSWORD" envDefault:"password"`
+	EsHost     string `env:"ES_HOST"`
+	EsPort     int    `env:"ES_PORT" envDefault:"5432"`
+	EsName     string `env:"ES_NAME" envDefault:"accounts"`
 }
 
 type ConfigPulsar struct {
@@ -58,12 +59,12 @@ func main() {
 
 	defer p.Close()
 
-	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.DbUser, cfg.DbPassword, cfg.DbHost, cfg.DbPort, cfg.DbName)
-	tracker, err := poller.NewPgRepository(dbURL)
+	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort, cfg.EsName)
+	repo, err := poller.NewPgRepository(dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}
-	lm := poller.New(tracker, poller.WithPollInterval(cfg.PollInterval))
+	lm := poller.New(repo, poller.WithPollInterval(cfg.PollInterval))
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
@@ -74,6 +75,8 @@ func main() {
 		log.Printf("Polling every: %s", cfg.PollInterval)
 		lm.Forward(ctx, p)
 	}()
+
+	go poller.StartGrpcServer(ctx, cfg.GrpcAddress, repo)
 
 	<-quit
 	cancel()
