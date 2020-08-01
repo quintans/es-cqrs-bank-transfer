@@ -15,7 +15,7 @@ require (
 	github.com/labstack/gommon v0.3.0
 	github.com/pierrec/lz4 v2.5.2+incompatible // indirect
 	github.com/quintans/es-cqrs-bank-transfer/account/shared v0.0.0
-	github.com/quintans/eventstore v0.0.0-20200731002243-a2d48b790649
+	github.com/quintans/eventstore v0.0.1
 	github.com/quintans/toolkit v0.0.2
 	github.com/sirupsen/logrus v1.6.0
 	github.com/yahoo/athenz v1.9.11 // indirect
@@ -23,7 +23,4 @@ require (
 	google.golang.org/protobuf v1.25.0 // indirect
 )
 
-replace (
-	github.com/quintans/es-cqrs-bank-transfer/account/shared => ../account/shared
-	github.com/quintans/eventstore => ../../eventstore
-)
+replace github.com/quintans/es-cqrs-bank-transfer/account/shared => ../account/shared

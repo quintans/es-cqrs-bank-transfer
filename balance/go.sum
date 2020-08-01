@@ -289,6 +289,8 @@ github.com/prometheus/client_model v0.0.0-20190812154241-14fe0d1b01d4/go.mod h1:
 github.com/prometheus/common v0.2.0/go.mod h1:TNfzLD0ON7rHzMJeJkieUDPYmFC7Snx/y86RQel1bk4=
 github.com/prometheus/procfs v0.0.0-20181005140218-185b4288413d/go.mod h1:c3At6R/oaqEKCNdg8wHV1ftS6bRYblBhIjjI8uT2IGk=
 github.com/prometheus/procfs v0.0.0-20190117184657-bf6a532e95b1/go.mod h1:c3At6R/oaqEKCNdg8wHV1ftS6bRYblBhIjjI8uT2IGk=
+github.com/quintans/eventstore v0.0.1 h1:W8Xhs9aqnq+e9OkShbuer5hW7ueoNpuOXfsstMz6Kqc=
+github.com/quintans/eventstore v0.0.1/go.mod h1:KlRA8day/DDNaSPxXKKD3YdWkzMJlCq69MWlwUGX8g4=
 github.com/quintans/goSQL v0.0.0-20171112122952-e93145e9919d/go.mod h1:MkrXLc68zRc6X1w5FRMsbOxoAJQFQjk2Smpuhv+Po9E=
 github.com/quintans/toolkit v0.0.2 h1:jDmOr/PWCpDbrtNj3fgdQw2hyexGWQpKx5Tkmus0Ge8=
 github.com/quintans/toolkit v0.0.2/go.mod h1:uL/SWplKeVX3eAW8BWhhZ/RaFWoZrrkyl7bXOiPQiHs=
