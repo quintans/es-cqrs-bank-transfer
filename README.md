@@ -3,7 +3,6 @@ PoC for CQRS and Event Sourcing
 
 This project is a way to play around with event sourcing and CQRS.
 Here I followed the more complex path, where I tried to have an architecture to handle a high throughput.
-In a future project I will make it as simple as possible, reusing many of the things developed here.
 
 This project has several moving pieces
 * Account Service: the right side of things. This writes into the event store.
@@ -13,6 +12,7 @@ This project has several moving pieces
 * Elasticsearch: the projection database
 * Redis: for distributed locking.
 
+In a future project I will make it as simple as possible, reusing many of the things developed here, but removing the Poller service and Pulsar for delivering events.
 
 ## Running
 
