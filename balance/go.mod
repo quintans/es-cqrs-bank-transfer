@@ -12,7 +12,6 @@ require (
 	github.com/gomodule/redigo v2.0.0+incompatible
 	github.com/klauspost/compress v1.10.10 // indirect
 	github.com/labstack/echo/v4 v4.1.16
-	github.com/labstack/gommon v0.3.0
 	github.com/pierrec/lz4 v2.5.2+incompatible // indirect
 	github.com/quintans/es-cqrs-bank-transfer/account/shared v0.0.0
 	github.com/quintans/eventstore v0.0.1
@@ -23,4 +22,7 @@ require (
 	google.golang.org/protobuf v1.25.0 // indirect
 )
 
-replace github.com/quintans/es-cqrs-bank-transfer/account/shared => ../account/shared
+replace (
+	github.com/quintans/es-cqrs-bank-transfer/account/shared => ../account/shared
+	github.com/apache/pulsar-client-go => github.com/quintans/pulsar-client-go v0.1.2-0.20200723162447-5ee5bb2e794d
+)

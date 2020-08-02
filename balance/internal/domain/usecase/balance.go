@@ -124,7 +124,10 @@ func (b BalanceUsecase) GetLastIDs(ctx context.Context) (domain.LastIDs, error) 
 }
 
 func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
-	// signals to stop the projection listener
+	logger := log.WithFields(log.Fields{
+		"method": "BalanceUsecase.RebuildBalance",
+	})
+	logger.Info("Signalling to STOP the balance projection listener")
 	err := b.Messenger.NotifyProjectionRegistry(ctx, domain.Notification{
 		Projection: domain.ProjectionBalance,
 		Action:     domain.Stop,
@@ -133,13 +136,13 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 		return err
 	}
 
-	// recreate table
+	logger.Info("Cleaning all balance data")
 	err = b.BalanceRepository.ClearAllData(ctx)
 	if err != nil {
 		return err
 	}
 
-	// signals to stop the projection listener
+	logger.Info("Signalling to START the balance projection listener")
 	return b.Messenger.NotifyProjectionRegistry(ctx, domain.Notification{
 		Projection: domain.ProjectionBalance,
 		Action:     domain.Start,

@@ -23,15 +23,15 @@ import (
 )
 
 type Config struct {
-	ApiPort          int      `env:"API_PORT" envDefault:"3000"`
+	ApiPort          int      `env:"API_PORT" envDefault:"8030"`
 	PulsarAddress    string   `env:"PULSAR_ADDRESS" envDefault:"localhost:6650"`
 	Topic            string   `env:"TOPIC" envDefault:"accounts"`
 	Subscription     string   `env:"SUBSCRIPTION" envDefault:"accounts-subscription"`
-	ElasticAddresses []string `env:"ES_ADDRESSES" envSeparator:","`
+	ElasticAddresses []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
 	ConfigEs
 	ConfigPoller
 	ConfigRedis
-	LockExpiry time.Duration `env:"LOCK_EXPIRY" envDefault:"20s"`
+	LockExpiry time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
 }
 
 type ConfigEs struct {
@@ -112,12 +112,10 @@ func Setup(cfg Config) {
 	notif := registry.RegisterSubscription(controller.NotificationController{
 		PulsarRegistry: registry,
 	})
-	go func() {
-		err := notif.Start(ctx)
-		if err != nil {
-			log.Fatal(err)
-		}
-	}()
+	err = notif.Start(ctx)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,
@@ -218,33 +216,48 @@ type Latch struct {
 }
 
 func (l Latch) Start(ctx context.Context) {
-	ticker := time.NewTicker(l.Expiry / 2)
-	defer ticker.Stop()
+	logger := log.WithField("latch", l.Name)
+	halfTime := l.Expiry / 2
 	for {
 		mu := l.Lock.NewMutex(l.Name, redsync.SetExpiry(l.Expiry), redsync.SetTries(2))
 		err := mu.Lock()
-		if err == nil {
+		if err == redsync.ErrFailed {
+			if ok := waitWithCancel(ctx, halfTime); !ok {
+				return
+			}
+		} else if err == nil {
+			// acquired lock
 			ctx2, cancel := context.WithCancel(ctx)
-			l.OnLock(ctx2)
-			ok := true
-			for ok {
-				select {
-				// happens when the latch was cancelled
-				case <-ctx.Done():
+			err := l.OnLock(ctx2)
+			if err != nil {
+				logger.WithError(err).Error("Unexpected error while running OnLock")
+			}
+			loop := true
+			for loop {
+				if ok := waitWithCancel(ctx, halfTime); !ok {
 					cancel()
 					return
-				case <-ticker.C:
-					ok, _ = mu.Extend()
 				}
+				loop, _ = mu.Extend()
 			}
 			cancel() // happens when where not able to extend the lock
 		} else {
-			select {
-			// happens when the latch was cancelled
-			case <-ctx.Done():
+			logger.WithError(err).Error("Unexpected error while acquiring lock")
+			if ok := waitWithCancel(ctx, halfTime); !ok {
 				return
-			case <-ticker.C:
 			}
 		}
+	}
+}
+
+func waitWithCancel(ctx context.Context, wait time.Duration) bool {
+	timer := time.NewTimer(wait)
+	timer.Stop()
+	select {
+	// happens when the latch was cancelled
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return true
 	}
 }

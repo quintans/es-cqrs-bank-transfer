@@ -4,13 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"strings"
 
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -42,7 +43,7 @@ type BalanceRepository struct {
 func (b BalanceRepository) GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.Balance, error) {
 	req := esapi.SearchRequest{
 		Index: []string{index},
-		Sort:  []string{ownerField + ".keyword:asc"},
+		Sort:  []string{ownerField + ":asc"},
 	}
 	res, err := req.Do(ctx, b.Client)
 	if err != nil {
@@ -50,6 +51,11 @@ func (b BalanceRepository) GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.
 	}
 	defer res.Body.Close()
 
+	balances := responseToBalances(res)
+	return balances, nil
+}
+
+func responseToBalances(res *esapi.Response) []entity.Balance {
 	mapResp := map[string]interface{}{}
 	if err := json.NewDecoder(res.Body).Decode(&mapResp); err != nil {
 		log.Fatalf("Error parsing SearchRequest response body: %s", err)
@@ -60,8 +66,7 @@ func (b BalanceRepository) GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.
 		doc := hit.(map[string]interface{})
 		balances = append(balances, sourceToBalance(doc))
 	}
-
-	return balances, nil
+	return balances
 }
 
 func sourceToBalance(doc map[string]interface{}) entity.Balance {
@@ -70,6 +75,12 @@ func sourceToBalance(doc map[string]interface{}) entity.Balance {
 	b.ID = doc["_id"].(string)
 	if v, ok := doc["_version"]; ok {
 		b.Version = int64(v.(float64))
+	}
+	if v, ok := source["event_id"]; ok {
+		b.EventID = v.(string)
+	}
+	if v, ok := source["status"]; ok {
+		b.Status = event.Status(v.(string))
 	}
 	if v, ok := source["balance"]; ok {
 		b.Balance = int64(v.(float64))
@@ -89,10 +100,18 @@ func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID string) (
 }
 
 func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
+	s := `{
+		"sort": [
+		  {
+			"event_id": { "order": "desc"}
+		  }
+		]
+	  }`
+
 	size := 1
 	req := esapi.SearchRequest{
 		Index: []string{index},
-		Sort:  []string{eventIDField + ".keyword:desc"},
+		Body:  strings.NewReader(s),
 		Size:  &size,
 	}
 	res, err := req.Do(ctx, b.Client)
@@ -101,24 +120,11 @@ func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
 	}
 	defer res.Body.Close()
 
-	mapResp := map[string]interface{}{}
-	if err := json.NewDecoder(res.Body).Decode(&mapResp); err != nil {
-		log.Fatalf("Error parsing SearchRequest response body: %s", err)
-	}
-	balances := []entity.Balance{}
-	// Iterate the document "hits" returned by API call
-	for _, hit := range mapResp[hits].(map[string]interface{})[hits].([]interface{}) {
-		doc := hit.(map[string]interface{})
-		balances = append(balances, sourceToBalance(doc))
-	}
-
+	balances := responseToBalances(res)
 	if len(balances) > 0 {
-		bal := balances[0]
-		return bal.EventID, nil
+		return balances[0].EventID, nil
 	}
-
 	return "", nil
-
 }
 
 func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Balance) error {
@@ -215,32 +221,38 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 }
 
 func (b BalanceRepository) ClearAllData(ctx context.Context) error {
-	// delete index
-	del := esapi.DeleteRequest{
-		Index:   index,
-		Refresh: "true",
+	// delete all docs
+	del := esapi.DeleteByQueryRequest{
+		Index: []string{index},
+		Body: strings.NewReader(`{
+			"query" : { 
+				"match_all" : {}
+			}
+		}`),
 	}
 	resDel, err := del.Do(ctx, b.Client)
 	if err != nil {
-		return fmt.Errorf("Error getting response for ClearAllData(balance): %w", err)
+		return fmt.Errorf("Error getting response when deleting docs ClearAllData(balance): %w", err)
 	}
 	defer resDel.Body.Close()
 	if resDel.IsError() {
-		return fmt.Errorf("[%s] Error deleting index", resDel.Status())
-	}
-
-	// create index
-	req := esapi.IndicesCreateRequest{
-		Index: index,
-	}
-	res, err := req.Do(ctx, b.Client)
-	if err != nil {
-		return fmt.Errorf("Error getting response for ClearAllData(balance): %w", err)
-	}
-	defer res.Body.Close()
-	if res.IsError() {
-		return fmt.Errorf("[%s] Error creating index", res.Status())
+		return fmt.Errorf("[%s] Error deleting docs", resDel.Status())
 	}
 
 	return nil
+}
+
+func walkMap(m map[string]interface{}, path string) (interface{}, error) {
+	fields := strings.Split(path, ".")
+	current := m
+	size := len(fields)
+	for i := 0; i < size-1; i++ {
+		k := fields[i]
+		v := current[k]
+		if v == nil {
+			return nil, fmt.Errorf("Path not found: %s", k)
+		}
+		current = v.(map[string]interface{})
+	}
+	return current[fields[size-1]], nil
 }

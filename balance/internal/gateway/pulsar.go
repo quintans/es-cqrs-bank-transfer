@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 
 	"github.com/apache/pulsar-client-go/pulsar"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
+	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -47,12 +47,12 @@ func (m Messenger) GetLastMessageID(ctx context.Context, topic string) ([]byte, 
 		}
 		eid := msg.Properties()[EventIDKey]
 
-		log.Printf("Will start polling from last event ID: %s", eid)
+		log.Infof("Will start polling from last event ID: %s", eid)
 		return msg.ID().Serialize(), eid, nil
 	}
 
-	log.Println("Will start polling from the begginning")
-	return pulsar.EarliestMessageID().Serialize(), "", nil
+	log.Info("Will start polling from the begginning")
+	return pulsar.LatestMessageID().Serialize(), "", nil
 }
 
 func (m Messenger) NotifyProjectionRegistry(ctx context.Context, n domain.Notification) error {

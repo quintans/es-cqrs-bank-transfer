@@ -6,11 +6,11 @@ import (
 	"fmt"
 
 	"github.com/apache/pulsar-client-go/pulsar"
-	"github.com/labstack/gommon/log"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/poller"
+	log "github.com/sirupsen/logrus"
 )
 
 type ProjectionBalance struct {
@@ -28,6 +28,8 @@ func (p ProjectionBalance) GetTopic() string {
 }
 
 func (p ProjectionBalance) Boot(ctx context.Context) (pulsar.MessageID, error) {
+	logger := log.WithField("projection", domain.ProjectionBalance)
+	logger.Info("Booting...")
 	// get the latest event ID from the DB
 	// get the last messageID from the MQ
 	lastIds, err := p.BalanceUsecase.GetLastIDs(ctx)
@@ -35,7 +37,11 @@ func (p ProjectionBalance) Boot(ctx context.Context) (pulsar.MessageID, error) {
 		return nil, fmt.Errorf("Could not get last IDs: %w", err)
 	}
 
-	if lastIds.MqEventID > lastIds.DbEventID {
+	if lastIds.MqEventID == "" || lastIds.MqEventID > lastIds.DbEventID {
+		logger.WithFields(log.Fields{
+			"from": lastIds.DbEventID,
+			"to":   lastIds.MqEventID,
+		}).Info("Catching up events")
 		// process all events from the ES in between
 		esPoller := poller.New(p.EsRepo, poller.WithFilter(common.Filter{
 			AggregateTypes: []string{event.AggregateType_Account},
@@ -69,6 +75,12 @@ func (p ProjectionBalance) routeMessageBalanceProjection(ctx context.Context, rm
 }
 
 func (p ProjectionBalance) routeEventBalanceProjection(ctx context.Context, m domain.Metadata, e common.Event) error {
+	logger := log.WithFields(log.Fields{
+		"projection": domain.ProjectionBalance,
+		"eventId":    e.ID,
+	})
+	logger.Info("routing event")
+
 	var err error
 	switch e.Kind {
 	case event.Event_AccountCreated:
@@ -78,7 +90,7 @@ func (p ProjectionBalance) routeEventBalanceProjection(ctx context.Context, m do
 	case event.Event_MoneyWithdrawn:
 		err = p.MoneyWithdrawn(context.Background(), m, e)
 	default:
-		log.Warnf("Unknown event type: %s\n", e.Kind)
+		logger.Warnf("Unknown event type: %s\n", e.Kind)
 	}
 	return err
 }

@@ -26,6 +26,24 @@ before run  the examples bellow we need to create an index in elasticsearch.
 curl -X PUT http://localhost:9200/balance
 ```
 
+Field Index
+```sh
+curl -XPUT "http://elastic:9200/balance" \
+-H 'Content-Type: application/json' -d'
+{  
+  "mappings": {    
+    "properties": {      
+      "event_id": {        
+        "type": "keyword"      
+      },   
+      "owner": {        
+        "type": "keyword"      
+      }    
+    }  
+  }
+}'
+```
+
 List all indexes
 ```sh
 curl http://localhost:9200/_cat/indices
@@ -56,27 +74,46 @@ curl -H "Content-Type: application/json" \
 
 Elasticsearch API
 
-List all docs
+List all docs by owner
 ```sh
-curl -H "Content-Type: application/json" -d '
-{
-    "query": {
-        "match_all": {}
-    },
-    "sort": [
-      {
-        "owner.keyword": {
-          "order": "asc"
-        }
-      }
-    ]
-}' \
-http://localhost:9200/balance/_search?pretty
+curl -XGET "http://elastic:9200/balance/_search?pretty" \
+-H 'Content-Type: application/json' -d'
+{    
+  "query": {
+    "match_all": {}
+  },    
+  "sort": [
+    {        
+      "owner.keyword": {
+        "order": "asc"
+      }      
+    }    
+  ]
+}'
 ```
+
 
 Get doc by ID
 ```sh
 curl http://localhost:9200/balance/_doc/<ID>?pretty
+```
+
+Max event ID
+```sh
+curl -XGET http://localhost:9200/balance/_search?pretty&size=1 \
+-H 'Content-Type: application/json' -d'
+{
+  "sort": [
+    {
+      "event_id": { "order": "desc"}
+    }
+  ]
+}'
+```
+
+Delete index
+```sh
+curl -X DELETE http://localhost:9200/balance
 ```
 
 ## Balance Service
@@ -85,7 +122,12 @@ curl http://localhost:9200/balance/_doc/<ID>?pretty
 
 List all
 ```sh
-curl http://localhost:3000/
+curl http://localhost:8030/
+```
+
+Rebuild Balance projection
+```sh
+curl http://localhost:8030/balance/rebuild
 ```
 
 ### Observations

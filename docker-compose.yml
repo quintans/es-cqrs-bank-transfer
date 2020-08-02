@@ -34,6 +34,8 @@ services:
       - TOPIC=accounts
     networks:
       - my-network
+    ports:
+      - 3000:3000
 
   svc-balance:
     build: 
@@ -46,10 +48,12 @@ services:
       - PULSAR_ADDRESS=pulsar:6650
       - TOPIC=accounts
       - REDIS_ADDRESSES=redis:6379
+      - ES_ADDRESS=svc-poller:3000
+      - ELASTIC_ADDRESSES=http://localhost:9200
     networks:
       - my-network
     ports:
-      - 3000:3000
+      - 8030:8030
 
   database:
     image: postgres:12.3-alpine
@@ -73,14 +77,22 @@ services:
   pulsar:
     image: apachepulsar/pulsar:2.6.0
     volumes:
-      - pulsardata:/pulsar/data
-      - pulsarconf:/pulsar/conf
+      - $PWD/data:/pulsar/data
     networks:
       - my-network
     ports:
       - 6650:6650
       - 8080:8080
     command: bin/pulsar standalone
+
+  dashboard:
+    image: apachepulsar/pulsar-dashboard:2.6.0
+    depends_on:
+      - pulsar
+    ports:
+      - "9000:80"
+    environment:
+      - SERVICE_URL=http://pulsar:8080
 
   elastic:
     image: docker.elastic.co/elasticsearch/elasticsearch:7.8.0
@@ -115,7 +127,5 @@ services:
       - my-network
 
 volumes:
-  pulsardata:
-  pulsarconf:
   data01:
     driver: local

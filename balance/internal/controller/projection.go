@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/apache/pulsar-client-go/pulsar"
+	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -104,41 +105,62 @@ func (bp *PulsarHandler) Start(ctx context.Context) error {
 }
 
 func (bp *PulsarHandler) startReader(ctx context.Context) error {
-	channel := make(chan pulsar.ReaderMessage, 100)
+	// channel := make(chan pulsar.ReaderMessage)
 	msgID, err := bp.boot(ctx)
 	if err != nil {
 		return err
 	}
-	reader, err := bp.client.CreateReader(pulsar.ReaderOptions{
+	client, err := pulsar.NewClient(pulsar.ClientOptions{
+		URL: "pulsar://localhost:6650",
+	})
+	reader, err := client.CreateReader(pulsar.ReaderOptions{
 		Topic:          bp.topic,
 		StartMessageID: msgID,
-		MessageChannel: channel,
+		// MessageChannel: channel,
 	})
 	if err != nil {
 		return err
 	}
 
-	defer reader.Close()
 	go func() {
 		<-ctx.Done()
-		close(channel)
+		reader.Close()
+		// close(channel)
 	}()
 
 	// Listen on the topic for incoming messages
-	for rm := range channel {
-		err := bp.handler(ctx, rm.Message)
-		if err != nil {
-			log.WithError(err).Errorf("Failed handling message")
+	go func() {
+		logger := log.WithFields(log.Fields{
+			"listener": bp.name,
+			"topic":    reader.Topic(),
+		})
+		logger.Info("Listening...")
+		// for rm := range channel {
+		// 	err := bp.handler(ctx, rm.Message)
+		// 	if err != nil {
+		// 		logger.WithError(err).Errorf("Failed handling message")
+		// 	}
+		// }
+		for {
+			m, err := reader.Next(ctx)
+			if err != nil {
+				break
+			}
+			err = bp.handler(ctx, m)
+			if err != nil {
+				logger.WithError(err).Errorf("Failed handling message")
+			}
 		}
-	}
+		logger.Info("Stop listening...")
+	}()
 
 	return nil
 }
 
 func (bp *PulsarHandler) startConsumer(ctx context.Context) error {
-	channel := make(chan pulsar.ConsumerMessage, 100)
+	channel := make(chan pulsar.ConsumerMessage)
 	consumer, err := bp.client.Subscribe(pulsar.ConsumerOptions{
-		Topic:            bp.topic,
+		Topic:            gateway.NotificationTopic,
 		SubscriptionName: bp.subscription,
 		Type:             pulsar.Shared,
 		MessageChannel:   channel,
@@ -146,7 +168,6 @@ func (bp *PulsarHandler) startConsumer(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	defer consumer.Close()
 
 	go func() {
 		<-ctx.Done()
@@ -154,12 +175,28 @@ func (bp *PulsarHandler) startConsumer(ctx context.Context) error {
 	}()
 
 	// Listen on the topic for incoming messages
-	for rm := range channel {
-		err := bp.handler(ctx, rm.Message)
-		if err != nil {
-			log.WithError(err).Errorf("Failed handling message")
+	go func() {
+		defer consumer.Close()
+		logger := log.WithFields(log.Fields{
+			"listener":     bp.name,
+			"topic":        gateway.NotificationTopic,
+			"subscription": bp.subscription,
+		})
+		logger.Info("Listening...")
+		for rm := range channel {
+			err := bp.handler(ctx, rm.Message)
+			if err != nil {
+				logger.WithError(err).Errorf("Failed handling message")
+			}
+			if err == nil {
+				consumer.Ack(rm)
+			} else {
+				consumer.Nack(rm)
+			}
 		}
-	}
+		logger.Info("Stop listening...")
+
+	}()
 
 	return nil
 }
@@ -170,5 +207,6 @@ func (bp *PulsarHandler) Stop() {
 	defer bp.mu.Unlock()
 	if bp.cancel != nil {
 		bp.cancel()
+		bp.cancel = nil
 	}
 }

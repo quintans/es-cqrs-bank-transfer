@@ -18,7 +18,7 @@ import (
 )
 
 type Config struct {
-	GrpcAddress string `env:"GRPC_ADDRESS" envDefault:":3000"`
+	GrpcAddress string `env:"ES_ADDRESS" envDefault:":3000"`
 	ConfigEs
 	ConfigPulsar
 	ConfigPoller
@@ -172,6 +172,7 @@ func (p *PulsarSink) Send(ctx context.Context, e common.Event) error {
 	log.WithFields(log.Fields{
 		"method":     "PulsarSink.Send",
 		"EventIDKey": EventIDKey,
+		"topic":      p.producer.Topic(),
 	}).Infof("Sending message to pulsar: %s", string(b))
 	_, err = p.producer.Send(ctx, &pulsar.ProducerMessage{
 		Payload: b,
