@@ -26,11 +26,11 @@ services:
       # dockerfile: ./Dockerfile
     depends_on:
       - database
-      - pulsar
+      - nats
     environment:
       - ES_HOST=database
       - ES_NAME=accounts
-      - PULSAR_ADDRESS=pulsar:6650
+      - NATS_ADDRESS=nats:4222
       - TOPIC=accounts
     networks:
       - my-network
@@ -42,10 +42,10 @@ services:
       context: ./balance
       # dockerfile: ./Dockerfile
     depends_on:
-      - pulsar
+      - nats
       - elastic
     environment:
-      - PULSAR_ADDRESS=pulsar:6650
+      - NATS_ADDRESS=nats:4222
       - TOPIC=accounts
       - REDIS_ADDRESSES=redis:6379
       - ES_ADDRESS=svc-poller:3000
@@ -74,25 +74,11 @@ services:
     ports:
       - 5432:5432
 
-  pulsar:
-    image: apachepulsar/pulsar:2.6.0
-    volumes:
-      - $PWD/data:/pulsar/data
-    networks:
-      - my-network
+  nats:
+    image: nats-streaming
     ports:
-      - 6650:6650
-      - 8080:8080
-    command: bin/pulsar standalone
-
-  dashboard:
-    image: apachepulsar/pulsar-dashboard:2.6.0
-    depends_on:
-      - pulsar
-    ports:
-      - "9000:80"
-    environment:
-      - SERVICE_URL=http://pulsar:8080
+      - "4222:4222"
+      - "8222:8222"
 
   elastic:
     image: docker.elastic.co/elasticsearch/elasticsearch:7.8.0

@@ -8,7 +8,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/stan.go"
-	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
+	"github.com/quintans/eventstore/projection"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -43,9 +43,9 @@ func (m Messenger) GetResumeToken(ctx context.Context, topic string) (string, er
 
 func (m Messenger) FreezeProjection(ctx context.Context, projectionName string) error {
 	log.WithField("projection", projectionName).Info("Freezing projection")
-	payload, err := json.Marshal(domain.Notification{
+	payload, err := json.Marshal(projection.Notification{
 		Projection: projectionName,
-		Action:     domain.Freeze,
+		Action:     projection.Freeze,
 	})
 	if err != nil {
 		return err
@@ -56,9 +56,9 @@ func (m Messenger) FreezeProjection(ctx context.Context, projectionName string) 
 
 func (m Messenger) UnfreezeProjection(ctx context.Context, projectionName string) error {
 	log.WithField("projection", projectionName).Info("Unfreezing projection")
-	payload, err := json.Marshal(domain.Notification{
+	payload, err := json.Marshal(projection.Notification{
 		Projection: projectionName,
-		Action:     domain.Unfreeze,
+		Action:     projection.Unfreeze,
 	})
 	if err != nil {
 		return err

@@ -11,15 +11,14 @@ import (
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	nats "github.com/nats-io/nats.go"
-	"github.com/nats-io/stan.go"
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
-	"github.com/quintans/toolkit/locks"
+	"github.com/quintans/eventstore/subscriber"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -72,12 +71,13 @@ func Setup(cfg Config) {
 	// es player
 	esRepo := player.NewGrpcRepository(cfg.EsAddress)
 
-	latch := locks.NewCountDownLatch()
-	latch.Add(1)
-	mq, streamer := startMQ(ctx, latch, cfg)
+	sub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, cfg.Topic, "test-cluster", "my-id")
+	if err != nil {
+		log.Fatalf("Error creating NATS subscriber: %s", err)
+	}
 	mess := gateway.Messenger{
-		Nats: mq,
-		Stan: streamer,
+		Nats: sub.GetQueue(),
+		Stan: sub.GetStream(),
 	}
 
 	balanceUC := usecase.BalanceUsecase{
@@ -85,72 +85,37 @@ func Setup(cfg Config) {
 		Messenger:         mess,
 	}
 
-	registry := map[string]*projection.BootableManager{}
-	registry[domain.ProjectionBalance] = projection.NewBootableManager(func() projection.Bootable {
-		return controller.ProjectionBalance{
-			BalanceUsecase: balanceUC,
-			EsRepo:         esRepo,
-			EsBatchSize:    cfg.EsBatchSize,
-			Topic:          cfg.Topic,
-			Messenger:      mess,
-			Stan:           streamer,
-		}
-	})
-	for _, reg := range registry {
-		refreshLock := projection.NewLooper(reg)
-		go refreshLock.Start(ctx)
+	prjCtrl := controller.ProjectionBalance{
+		Subscriber:     sub,
+		BalanceUsecase: balanceUC,
 	}
-
-	natsCtrl := controller.NotificationController{
-		Registry: registry,
-	}
-	mq.Subscribe(gateway.NotificationTopic, natsCtrl.Handler)
+	manager := projection.NewBootableManager(
+		domain.ProjectionBalance,
+		prjCtrl,
+		[]string{event.AggregateType_Account},
+		esRepo,
+		cfg.Topic,
+		1, 2,
+		gateway.NotificationTopic,
+		prjCtrl.Handler,
+	)
+	refreshLock := projection.NewLooper(manager)
+	go refreshLock.Start(ctx)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,
 	}
 
-	latch.Add(1)
-	go startRestServer(ctx, latch, restCtrl, cfg.ApiPort)
+	go startRestServer(ctx, restCtrl, cfg.ApiPort)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-quit
 	cancel()
-	latch.WaitWithTimeout(3 * time.Second)
+	time.Sleep(3 * time.Second)
 }
 
-func startMQ(
-	ctx context.Context,
-	latch *locks.CountDownLatch,
-	cfg Config,
-) (*nats.Conn, stan.Conn) {
-	logger := log.WithFields(log.Fields{
-		"method": "MQListener",
-	})
-
-	nc, err := nats.Connect("nats://" + cfg.NatsAddress)
-	if err != nil {
-		log.Fatalf("Could not instantiate NATS client: %v", err)
-	}
-
-	streamer, err := stan.Connect("test-cluster", "my-id", stan.NatsURL(cfg.NatsAddress))
-	if err != nil {
-		log.Fatalf("Could not instantiate NATS stream connection: %v", err)
-	}
-
-	go func() {
-		<-ctx.Done()
-		logger.Info("Shutting down MQ")
-		nc.Close()
-		streamer.Close()
-		latch.Done()
-	}()
-
-	return nc, streamer
-}
-
-func startRestServer(ctx context.Context, latch *locks.CountDownLatch, c controller.RestController, port int) {
+func startRestServer(ctx context.Context, c controller.RestController, port int) {
 	// Echo instance
 	e := echo.New()
 
@@ -176,5 +141,4 @@ func startRestServer(ctx context.Context, latch *locks.CountDownLatch, c control
 	if err := e.Start(address); err != nil {
 		log.Info("shutting down the server")
 	}
-	latch.Done()
 }

@@ -1,6 +1,7 @@
 package infrastructure
 
 import (
+	"database/sql"
 	"fmt"
 
 	"github.com/labstack/echo/v4"
@@ -8,6 +9,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/usecase"
 	"github.com/quintans/eventstore"
+	"github.com/quintans/eventstore/repo"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -18,18 +20,21 @@ type Config struct {
 	EsHost            string `env:"ES_HOST"`
 	EsPort            int    `env:"ES_PORT" envDefault:"5432"`
 	EsName            string `env:"ES_NAME" envDefault:"accounts"`
-	SnapshotThreshold int    `env:"SNAPSHOT_THRESHOLD" envDefault:"5"`
+	SnapshotThreshold int    `env:"SNAPSHOT_THRESHOLD" envDefault:"50"`
 }
 
 func Setup(cfg *Config) {
 	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort, cfg.EsName)
-
-	// evenstore
-	r, err := eventstore.NewPgEsRepository(dbURL)
+	db, err := newDB(dbURL)
 	if err != nil {
 		log.Fatal(err)
 	}
-	es := eventstore.NewESPostgreSQL(r, cfg.SnapshotThreshold)
+	// evenstore
+	esRepo, err := repo.NewPgEsRepositoryDB(db)
+	if err != nil {
+		log.Fatal(err)
+	}
+	es := eventstore.NewEventStore(esRepo, cfg.SnapshotThreshold)
 
 	// Usecases
 	uc := usecase.NewAccountUsecase(es)
@@ -58,4 +63,15 @@ func StartRestServer(c controller.Controller, port int) {
 	// Start server
 	address := fmt.Sprintf(":%d", port)
 	e.Logger.Fatal(e.Start(address))
+}
+
+func newDB(dburl string) (*sql.DB, error) {
+	db, err := sql.Open("postgres", dburl)
+	if err != nil {
+		return nil, err
+	}
+	if err := db.Ping(); err != nil {
+		return nil, err
+	}
+	return db, nil
 }

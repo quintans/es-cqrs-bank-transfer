@@ -11,5 +11,5 @@ require (
 	github.com/sirupsen/logrus v1.4.2
 )
 
-// replace github.com/quintans/eventstore => ../../eventstore
+replace github.com/quintans/eventstore => ../../eventstore
 replace github.com/quintans/es-cqrs-bank-transfer/account/shared => ./shared

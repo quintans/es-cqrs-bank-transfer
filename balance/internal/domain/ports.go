@@ -37,21 +37,9 @@ type BalanceRepository interface {
 	ClearAllData(ctx context.Context) error
 }
 
-type Action int
-
-const (
-	Freeze Action = iota + 1
-	Unfreeze
-)
-
 const (
 	ProjectionBalance string = "ProjectionBalance"
 )
-
-type Notification struct {
-	Projection string `json:"projection"`
-	Action
-}
 
 type Messenger interface {
 	// GetResumeToken returns the resume token for a specific topic
