@@ -4,82 +4,122 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 
-	"github.com/apache/pulsar-client-go/pulsar"
+	"github.com/nats-io/stan.go"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
-	"github.com/quintans/eventstore/common"
-	"github.com/quintans/eventstore/poller"
+	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
+	"github.com/quintans/eventstore"
+	"github.com/quintans/eventstore/player"
 	log "github.com/sirupsen/logrus"
 )
 
 type ProjectionBalance struct {
-	Topic          string
-	EsRepo         poller.Repository
 	BalanceUsecase domain.BalanceUsecase
+	EsRepo         player.Repository
+	EsBatchSize    int
+	Topic          string
+	Messenger      gateway.Messenger
+	Stan           stan.Conn
 }
 
 func (p ProjectionBalance) GetName() string {
 	return domain.ProjectionBalance
 }
 
-func (p ProjectionBalance) GetTopic() string {
-	return p.Topic
+func (p ProjectionBalance) GetResumeEventID(ctx context.Context) (string, error) {
+	return p.BalanceUsecase.GetLastEventID(ctx)
 }
 
-func (p ProjectionBalance) Boot(ctx context.Context) (pulsar.MessageID, error) {
-	logger := log.WithField("projection", domain.ProjectionBalance)
-	logger.Info("Booting...")
+func (p ProjectionBalance) Boot(ctx context.Context) error {
 	// get the latest event ID from the DB
-	// get the last messageID from the MQ
-	lastIds, err := p.BalanceUsecase.GetLastIDs(ctx)
+	prjEventID, err := p.BalanceUsecase.GetLastEventID(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("Could not get last IDs: %w", err)
+		return fmt.Errorf("Could not get last event ID from the projection: %w", err)
 	}
-
-	if lastIds.MqEventID == "" || lastIds.MqEventID > lastIds.DbEventID {
-		logger.WithFields(log.Fields{
-			"from": lastIds.DbEventID,
-			"to":   lastIds.MqEventID,
-		}).Info("Catching up events")
-		// process all events from the ES in between
-		esPoller := poller.New(p.EsRepo, poller.WithFilter(common.Filter{
-			AggregateTypes: []string{event.AggregateType_Account},
-		}))
-
-		_, err = esPoller.ReplayFromUntil(ctx, func(ctx context.Context, e common.Event) error {
-			m := domain.Metadata{AggregateID: e.AggregateID, EventID: e.ID}
-			return p.routeEventBalanceProjection(ctx, m, e)
-		}, lastIds.DbEventID, lastIds.MqEventID)
-		if err != nil {
-			return nil, fmt.Errorf("Could not replay all events: %w", err)
-		}
-	}
-
-	// resume reading from the MQ
-	id, err := pulsar.DeserializeMessageID(lastIds.MqMessageID)
-	if err != nil {
-		return nil, fmt.Errorf("Could not deserialize message ID: %w", err)
-	}
-	return id, nil
-
-}
-
-func (p ProjectionBalance) Handler(c context.Context, rm pulsar.Message) error {
-	return p.routeMessageBalanceProjection(c, rm)
-}
-
-func (p ProjectionBalance) routeMessageBalanceProjection(ctx context.Context, rm pulsar.Message) error {
-	e, m := messageToEvent(rm)
-	return p.routeEventBalanceProjection(ctx, m, e)
-}
-
-func (p ProjectionBalance) routeEventBalanceProjection(ctx context.Context, m domain.Metadata, e common.Event) error {
+	filter := player.WithAggregateTypes(event.AggregateType_Account)
 	logger := log.WithFields(log.Fields{
 		"projection": domain.ProjectionBalance,
-		"eventId":    e.ID,
+		"from":       prjEventID,
+	})
+	logger.Info("Booting...")
+
+	// To avoid the creation of  potential massive buffer size
+	// and to ensure that events are not lost, between the switch to the consumer,
+	// we execute the fetch in several steps.
+	// 1) Process all events from the ES from the begginning
+	// 2) start the consumer to track new events from now on
+	// 3) process any event that may have arrived between the switch
+	// 4) start consuming events from the last position
+	replayer := player.New(p.EsRepo, p.EsBatchSize)
+	handler := func(ctx context.Context, e eventstore.Event) error {
+		err := p.Handler(ctx, e)
+		if err != nil {
+			return err
+		}
+		return err
+	}
+	// replay oldest events
+	lastEventID, err := replayer.ReplayFromUntil(ctx, handler, prjEventID, "", filter)
+	if err != nil {
+		return fmt.Errorf("Could not replay all events (first part): %w", err)
+	}
+
+	// start tracking events
+	token, err := p.Messenger.GetResumeToken(ctx, p.Topic)
+	if err != nil {
+		return fmt.Errorf("Could not retrieve resume token: %w", err)
+	}
+
+	// consume potential missed events events between the switch to the consumer
+	lastEventID, err = replayer.ReplayFromUntil(ctx, handler, lastEventID, "", filter)
+	if err != nil {
+		return fmt.Errorf("Could not replay all events (second part): %w", err)
+	}
+	logger.WithField("to", lastEventID).Info("Finished booting")
+
+	// start consuming events from the last available position
+	start := stan.DeliverAllAvailable()
+	if token != "" {
+		seq, err := strconv.ParseUint(token, 10, 64)
+		if err != nil {
+			logger.WithError(err).Errorf("Unable to parse resume token '%s'", token)
+		} else {
+			start = stan.StartAtSequence(seq)
+		}
+	}
+	sub, err := p.Stan.Subscribe(p.Topic, func(m *stan.Msg) {
+		e := eventstore.Event{}
+		err := json.Unmarshal(m.Data, &e)
+		if err != nil {
+			logger.WithError(err).Errorf("Unable to unmarshal event '%s'", string(m.Data))
+		}
+		err = p.Handler(ctx, e)
+		if err != nil {
+			logger.WithError(err).Errorf("Error when handling event with ID '%s'", e.ID)
+		}
+	}, start)
+
+	go func() {
+		<-ctx.Done()
+		sub.Close()
+	}()
+
+	return nil
+}
+
+func (p ProjectionBalance) Handler(ctx context.Context, e eventstore.Event) error {
+	logger := log.WithFields(log.Fields{
+		"projection": domain.ProjectionBalance,
+		"event":      e,
 	})
 	logger.Info("routing event")
+
+	m := domain.Metadata{
+		AggregateID: e.AggregateID,
+		EventID:     e.ID,
+	}
 
 	var err error
 	switch e.Kind {
@@ -95,18 +135,7 @@ func (p ProjectionBalance) routeEventBalanceProjection(ctx context.Context, m do
 	return err
 }
 
-func messageToEvent(msg pulsar.Message) (common.Event, domain.Metadata) {
-	p := msg.Payload()
-	e := common.Event{}
-	json.Unmarshal(p, &e)
-	m := domain.Metadata{
-		AggregateID: e.AggregateID,
-		EventID:     e.ID,
-	}
-	return e, m
-}
-
-func (p ProjectionBalance) AccountCreated(ctx context.Context, m domain.Metadata, e common.Event) error {
+func (p ProjectionBalance) AccountCreated(ctx context.Context, m domain.Metadata, e eventstore.Event) error {
 	ac := event.AccountCreated{}
 	if err := json.Unmarshal(e.Body, &ac); err != nil {
 		return err
@@ -114,7 +143,7 @@ func (p ProjectionBalance) AccountCreated(ctx context.Context, m domain.Metadata
 	return p.BalanceUsecase.AccountCreated(ctx, m, ac)
 }
 
-func (p ProjectionBalance) MoneyDeposited(ctx context.Context, m domain.Metadata, e common.Event) error {
+func (p ProjectionBalance) MoneyDeposited(ctx context.Context, m domain.Metadata, e eventstore.Event) error {
 	ac := event.MoneyDeposited{}
 	if err := json.Unmarshal(e.Body, &ac); err != nil {
 		return err
@@ -122,7 +151,7 @@ func (p ProjectionBalance) MoneyDeposited(ctx context.Context, m domain.Metadata
 	return p.BalanceUsecase.MoneyDeposited(ctx, m, ac)
 }
 
-func (p ProjectionBalance) MoneyWithdrawn(ctx context.Context, m domain.Metadata, e common.Event) error {
+func (p ProjectionBalance) MoneyWithdrawn(ctx context.Context, m domain.Metadata, e eventstore.Event) error {
 	ac := event.MoneyWithdrawn{}
 	if err := json.Unmarshal(e.Body, &ac); err != nil {
 		return err

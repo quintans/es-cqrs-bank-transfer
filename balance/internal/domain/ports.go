@@ -23,8 +23,8 @@ type BalanceUsecase interface {
 	AccountCreated(ctx context.Context, metadata Metadata, e event.AccountCreated) error
 	MoneyDeposited(ctx context.Context, metadata Metadata, e event.MoneyDeposited) error
 	MoneyWithdrawn(ctx context.Context, metadata Metadata, e event.MoneyWithdrawn) error
-	GetLastIDs(ctx context.Context) (LastIDs, error)
 	RebuildBalance(ctx context.Context) error
+	GetLastEventID(ctx context.Context) (string, error)
 }
 
 type BalanceRepository interface {
@@ -40,8 +40,8 @@ type BalanceRepository interface {
 type Action int
 
 const (
-	Start Action = iota + 1
-	Stop
+	Freeze Action = iota + 1
+	Unfreeze
 )
 
 const (
@@ -54,8 +54,10 @@ type Notification struct {
 }
 
 type Messenger interface {
-	// GetLastMessageID returns the serialized message ID and the event ID, both from the MQ
-	GetLastMessageID(ctx context.Context, topic string) ([]byte, string, error)
-	// NotifyProjectionRegistry signals the registry to stop or start a listener
-	NotifyProjectionRegistry(ctx context.Context, notification Notification) error
+	// GetResumeToken returns the resume token for a specific topic
+	GetResumeToken(ctx context.Context, topic string) (string, error)
+	// FreezeProjection signals the registry to STOP processing the projection
+	FreezeProjection(ctx context.Context, projectionName string) error
+	// UnfreezeProjection signals the registry to START processing the projection
+	UnfreezeProjection(ctx context.Context, projectionName string) error
 }
