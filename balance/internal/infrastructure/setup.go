@@ -11,14 +11,14 @@ import (
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
-	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
+	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
 	"github.com/quintans/eventstore/subscriber"
+	"github.com/quintans/toolkit/locks"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -61,7 +61,7 @@ func Setup(cfg Config) {
 	}
 
 	defer res.Body.Close()
-	log.Println(res)
+	log.Println("Elasticsearch info: ", res)
 
 	repo := gateway.BalanceRepository{
 		Client: es,
@@ -70,8 +70,10 @@ func Setup(cfg Config) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// es player
 	esRepo := player.NewGrpcRepository(cfg.EsAddress)
+	replayer := player.New(esRepo, 20)
 
-	sub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, cfg.Topic, "test-cluster", "my-id")
+	// the clientID could be suffixed with low partition ID
+	sub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, cfg.Topic, "test-cluster", "balance-0")
 	if err != nil {
 		log.Fatalf("Error creating NATS subscriber: %s", err)
 	}
@@ -86,21 +88,23 @@ func Setup(cfg Config) {
 	}
 
 	prjCtrl := controller.ProjectionBalance{
-		Subscriber:     sub,
 		BalanceUsecase: balanceUC,
 	}
 	manager := projection.NewBootableManager(
-		domain.ProjectionBalance,
 		prjCtrl,
-		[]string{event.AggregateType_Account},
-		esRepo,
+		sub,
+		replayer,
 		cfg.Topic,
-		1, 2,
+		0, 0, // no partitioning range, meaning we will not use partitioned topic
 		gateway.NotificationTopic,
-		prjCtrl.Handler,
 	)
-	refreshLock := projection.NewLooper(manager)
-	go refreshLock.Start(ctx)
+	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
+	locker, err := locks.NewRedisLock(cfg.RedisAddresses, "balance", cfg.LockExpiry)
+	if err != nil {
+		log.Fatal("Error instantiating Locker: %v", err)
+	}
+	monitor := common.NewBootMonitor(manager, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
+	go monitor.Start(ctx)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,
