@@ -7,9 +7,8 @@ require (
 	github.com/google/uuid v1.1.1
 	github.com/labstack/echo/v4 v4.1.16
 	github.com/quintans/es-cqrs-bank-transfer/account/shared v0.0.0-00010101000000-000000000000
-	github.com/quintans/eventstore v0.0.1
+	github.com/quintans/eventstore v0.4.0
 	github.com/sirupsen/logrus v1.4.2
 )
 
-replace github.com/quintans/eventstore => ../../eventstore
 replace github.com/quintans/es-cqrs-bank-transfer/account/shared => ./shared
