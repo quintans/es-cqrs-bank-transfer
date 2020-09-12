@@ -9,12 +9,8 @@ require (
 	github.com/lib/pq v1.7.0
 	github.com/nats-io/nats-streaming-server v0.18.0 // indirect
 	github.com/nats-io/stan.go v0.7.0
-	github.com/quintans/eventstore v0.3.2
-	github.com/quintans/toolkit v0.0.0-20191116152115-d7982be7971f
+	github.com/quintans/eventstore v0.4.0
+	github.com/quintans/toolkit v0.0.3
 	github.com/sirupsen/logrus v1.4.2
 	google.golang.org/protobuf v1.25.0 // indirect
 )
-
-replace github.com/quintans/eventstore => ../../eventstore
-
-replace github.com/quintans/toolkit => ../../toolkit

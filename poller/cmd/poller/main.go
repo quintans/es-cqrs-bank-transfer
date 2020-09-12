@@ -11,6 +11,8 @@ import (
 	"github.com/caarlos0/env/v6"
 	_ "github.com/lib/pq"
 	"github.com/nats-io/stan.go"
+	"github.com/quintans/eventstore/common"
+	"github.com/quintans/eventstore/feed"
 	"github.com/quintans/eventstore/feed/poller"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/repo"
@@ -56,17 +58,18 @@ func main() {
 		log.Fatal(err)
 	}
 
-	snk, err := sink.NewNatsSink(cfg.ConfigNats.Topic, "test-cluster", "my-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
+	sinker, err := sink.NewNatsSink(cfg.ConfigNats.Topic, 0,
+		"test-cluster", "poller-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error instantiating Sinker: %v", err)
 	}
 
-	defer snk.Close()
+	defer sinker.Close()
 
 	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort, cfg.EsName)
 	repo, err := repo.NewPgEsRepository(dbURL)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("Error instantiating event store: %v", err)
 	}
 
 	quit := make(chan os.Signal, 1)
@@ -74,18 +77,17 @@ func main() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
+	bootable := feed.New(
+		poller.New(repo, poller.WithPollInterval(cfg.PollInterval)),
+		sinker,
+	)
 	locker, err := locks.NewRedisLock(cfg.RedisAddresses, "poller", cfg.LockExpiry)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Error instantiating Locker: %v", err)
 	}
-	looper := locks.NewLooper(locks.NewBootableManager(func() locks.Bootable {
-		log.Printf("New Polling: %s\n", cfg.PollInterval)
-		return NewFeeder(
-			poller.New(repo, poller.WithPollInterval(cfg.PollInterval)),
-			snk,
-		)
-	}), locks.WithLock(locker), locks.WithRefreshInterval(cfg.LockExpiry/2))
-	go looper.Start(ctx)
+
+	monitor := common.NewBootMonitor(bootable, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
+	go monitor.Start(ctx)
 
 	go player.StartGrpcServer(ctx, cfg.GrpcAddress, repo)
 
