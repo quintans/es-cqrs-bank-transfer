@@ -27,11 +27,13 @@ services:
     depends_on:
       - database
       - nats
+      - redis
     environment:
       - ES_HOST=database
       - ES_NAME=accounts
       - NATS_ADDRESS=nats:4222
       - TOPIC=accounts
+      - REDIS_ADDRESSES=localhost:6379
     networks:
       - my-network
     ports:
@@ -44,12 +46,14 @@ services:
     depends_on:
       - nats
       - elastic
+      - redis
     environment:
       - NATS_ADDRESS=nats:4222
       - TOPIC=accounts
       - REDIS_ADDRESSES=redis:6379
       - ES_ADDRESS=svc-poller:3000
       - ELASTIC_ADDRESSES=http://localhost:9200
+      - REDIS_ADDRESSES=localhost:6379
     networks:
       - my-network
     ports:
