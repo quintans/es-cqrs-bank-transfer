@@ -51,6 +51,10 @@ func (b BalanceRepository) GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.
 	}
 	defer res.Body.Close()
 
+	if res.IsError() {
+		return nil, fmt.Errorf("[%s] Error GetAllOrderByOwnerAsc", res.Status())
+	}
+
 	balances := responseToBalances(res)
 	return balances, nil
 }
@@ -120,6 +124,10 @@ func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
 	}
 	defer res.Body.Close()
 
+	if res.IsError() {
+		return "", fmt.Errorf("[%s] Error GetMaxEventID", res.Status())
+	}
+
 	balances := responseToBalances(res)
 	if len(balances) > 0 {
 		return balances[0].EventID, nil
@@ -152,7 +160,7 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), docID)
+		return fmt.Errorf("[%s] Error CreatAccount document ID=%s", res.Status(), docID)
 	}
 	return nil
 }
@@ -215,13 +223,14 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("[%s] Error indexing document ID=%s", res.Status(), docID)
+		return fmt.Errorf("[%s] Error updating document ID=%s", res.Status(), docID)
 	}
 	return nil
 }
 
 func (b BalanceRepository) ClearAllData(ctx context.Context) error {
 	// delete all docs
+	refresh := true
 	del := esapi.DeleteByQueryRequest{
 		Index: []string{index},
 		Body: strings.NewReader(`{
@@ -229,6 +238,7 @@ func (b BalanceRepository) ClearAllData(ctx context.Context) error {
 				"match_all" : {}
 			}
 		}`),
+		Refresh: &refresh,
 	}
 	resDel, err := del.Do(ctx, b.Client)
 	if err != nil {
