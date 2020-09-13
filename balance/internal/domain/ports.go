@@ -40,12 +40,3 @@ type BalanceRepository interface {
 const (
 	ProjectionBalance string = "ProjectionBalance"
 )
-
-type Messenger interface {
-	// GetResumeToken returns the resume token for a specific topic
-	GetResumeToken(ctx context.Context, topic string) (string, error)
-	// FreezeProjection signals the registry to STOP processing the projection
-	FreezeProjection(ctx context.Context, projectionName string) error
-	// UnfreezeProjection signals the registry to START processing the projection
-	UnfreezeProjection(ctx context.Context, projectionName string) error
-}

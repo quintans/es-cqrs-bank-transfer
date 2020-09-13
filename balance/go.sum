@@ -295,11 +295,13 @@ github.com/prometheus/procfs v0.0.0-20190117184657-bf6a532e95b1/go.mod h1:c3At6R
 github.com/quintans/eventstore v0.3.1 h1:OEbVGnWiMej2mitaAx6e72aHA2wSXFJWmsoMb6fxnmA=
 github.com/quintans/eventstore v0.3.1/go.mod h1:CDc/k8fB5LELgKFgBgcOawk9YM6siUXafTD5YRAkKIs=
 github.com/quintans/eventstore v0.4.0/go.mod h1:RgDwtWQOU8wEldz71Ucw2cQ/wYmuZg39oD8WhsYggQE=
+github.com/quintans/eventstore v0.5.0/go.mod h1:RgDwtWQOU8wEldz71Ucw2cQ/wYmuZg39oD8WhsYggQE=
 github.com/quintans/goSQL v0.0.0-20171112122952-e93145e9919d/go.mod h1:MkrXLc68zRc6X1w5FRMsbOxoAJQFQjk2Smpuhv+Po9E=
 github.com/quintans/goSQL v1.3.0/go.mod h1:P08UBv1bDcutt2DwddZd3M3eXI+z9+VoNLH1neKn/8E=
 github.com/quintans/toolkit v0.0.0-20191116152115-d7982be7971f/go.mod h1:PpTakdDnp2jAKvAcnpWCEUg6RsDAdB3mK3jxUvXn1WM=
 github.com/quintans/toolkit v0.0.2 h1:jDmOr/PWCpDbrtNj3fgdQw2hyexGWQpKx5Tkmus0Ge8=
 github.com/quintans/toolkit v0.0.2/go.mod h1:uL/SWplKeVX3eAW8BWhhZ/RaFWoZrrkyl7bXOiPQiHs=
+github.com/quintans/toolkit v0.0.3 h1:G3vpPqGTZKB+zO9bTMdX/47FlClpmBPCfqATDN8m5fg=
 github.com/quintans/toolkit v0.0.3/go.mod h1:XgqPI69fuZwV3DSRmTMAeh99Y3xF3pq1uuyVvg+Opo8=
 github.com/rcrowley/go-metrics v0.0.0-20181016184325-3113b8401b8a/go.mod h1:bCqnVzQkZxMG4s8nGwiZ5l3QUCyqpo9Y+/ZMZ9VjZe4=
 github.com/remyoudompheng/bigfft v0.0.0-20190512091148-babf20351dd7/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=

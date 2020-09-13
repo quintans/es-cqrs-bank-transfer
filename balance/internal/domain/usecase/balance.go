@@ -8,6 +8,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
+	"github.com/quintans/eventstore/projection"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 )
@@ -18,7 +19,7 @@ var (
 
 type BalanceUsecase struct {
 	BalanceRepository domain.BalanceRepository
-	Messenger         domain.Messenger
+	Subscriber        projection.Subscriber
 }
 
 func (b BalanceUsecase) ListAll(ctx context.Context) ([]entity.Balance, error) {
@@ -107,8 +108,9 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 		"method": "BalanceUsecase.RebuildBalance",
 	})
 	logger.Info("Signalling to STOP the balance projection listener")
-	err := b.Messenger.FreezeProjection(ctx, domain.ProjectionBalance)
+	err := b.Subscriber.FreezeProjection(ctx, domain.ProjectionBalance)
 	if err != nil {
+		log.WithError(err).Errorf("Error while freezing projection %s", domain.ProjectionBalance)
 		return err
 	}
 
@@ -119,7 +121,7 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 	}
 
 	logger.Info("Signalling to START the balance projection listener")
-	return b.Messenger.UnfreezeProjection(ctx, domain.ProjectionBalance)
+	return b.Subscriber.UnfreezeProjection(ctx, domain.ProjectionBalance)
 }
 
 func (b BalanceUsecase) GetLastEventID(ctx context.Context) (string, error) {

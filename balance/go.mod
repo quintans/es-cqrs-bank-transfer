@@ -14,7 +14,7 @@ require (
 	github.com/nats-io/nats.go v1.10.0
 	github.com/nats-io/stan.go v0.7.0
 	github.com/quintans/es-cqrs-bank-transfer/account/shared v0.0.0
-	github.com/quintans/eventstore v0.4.0
+	github.com/quintans/eventstore v0.5.0
 	github.com/quintans/toolkit v0.0.3
 	github.com/sirupsen/logrus v1.6.0
 	golang.org/x/sys v0.0.0-20200720211630-cb9d2d5c5666 // indirect

@@ -22,6 +22,10 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
+const (
+	NotificationTopic = "notifications"
+)
+
 type Config struct {
 	ApiPort          int      `env:"API_PORT" envDefault:"8030"`
 	ElasticAddresses []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
@@ -73,18 +77,14 @@ func Setup(cfg Config) {
 	replayer := player.New(esRepo, 20)
 
 	// the clientID could be suffixed with low partition ID
-	sub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, cfg.Topic, "test-cluster", "balance-0")
+	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance-0", cfg.Topic, NotificationTopic)
 	if err != nil {
 		log.Fatalf("Error creating NATS subscriber: %s", err)
-	}
-	mess := gateway.Messenger{
-		Nats: sub.GetQueue(),
-		Stan: sub.GetStream(),
 	}
 
 	balanceUC := usecase.BalanceUsecase{
 		BalanceRepository: repo,
-		Messenger:         mess,
+		Subscriber:        natsSub,
 	}
 
 	prjCtrl := controller.ProjectionBalance{
@@ -92,11 +92,9 @@ func Setup(cfg Config) {
 	}
 	manager := projection.NewBootableManager(
 		prjCtrl,
-		sub,
+		natsSub,
 		replayer,
-		cfg.Topic,
 		0, 0, // no partitioning range, meaning we will not use partitioned topic
-		gateway.NotificationTopic,
 	)
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
 	locker, err := locks.NewRedisLock(cfg.RedisAddresses, "balance", cfg.LockExpiry)
