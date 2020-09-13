@@ -5,8 +5,8 @@ import (
 	"github.com/quintans/eventstore"
 )
 
-func CreateAccount(owner string, id string, money int64) *Account {
-	a := &Account{
+func CreateAccount(owner string, id string, money int64) *account {
+	a := &account{
 		Status:  event.OPEN,
 		Balance: money,
 		Owner:   owner,
@@ -20,20 +20,20 @@ func CreateAccount(owner string, id string, money int64) *Account {
 	return a
 }
 
-func NewAccount() *Account {
-	a := &Account{}
+func NewAccount() *account {
+	a := &account{}
 	a.RootAggregate = eventstore.NewRootAggregate(a, "", 0)
 	return a
 }
 
-type Account struct {
+type account struct {
 	eventstore.RootAggregate
 	Status  event.Status `json:"status,omitempty"`
 	Balance int64        `json:"balance,omitempty"`
 	Owner   string       `json:"owner,omitempty"`
 }
 
-func (a *Account) HandleAccountCreated(e event.AccountCreated) {
+func (a *account) HandleAccountCreated(e event.AccountCreated) {
 	a.ID = e.ID
 	a.Balance = e.Money
 	a.Owner = e.Owner
@@ -41,19 +41,19 @@ func (a *Account) HandleAccountCreated(e event.AccountCreated) {
 	a.Status = event.OPEN
 }
 
-func (a *Account) HandleMoneyDeposited(event event.MoneyDeposited) {
+func (a *account) HandleMoneyDeposited(event event.MoneyDeposited) {
 	a.Balance += event.Money
 }
 
-func (a *Account) HandleMoneyWithdrawn(event event.MoneyWithdrawn) {
+func (a *account) HandleMoneyWithdrawn(event event.MoneyWithdrawn) {
 	a.Balance -= event.Money
 }
 
-func (a *Account) HandleOwnerUpdated(event event.OwnerUpdated) {
+func (a *account) HandleOwnerUpdated(event event.OwnerUpdated) {
 	a.Owner = event.Owner
 }
 
-func (a *Account) Withdraw(money int64) bool {
+func (a *account) Withdraw(money int64) bool {
 	if a.Balance >= money {
 		a.ApplyChange(event.MoneyWithdrawn{Money: money})
 		return true
@@ -61,10 +61,10 @@ func (a *Account) Withdraw(money int64) bool {
 	return false
 }
 
-func (a *Account) Deposit(money int64) {
+func (a *account) Deposit(money int64) {
 	a.ApplyChange(event.MoneyDeposited{Money: money})
 }
 
-func (a *Account) UpdateOwner(owner string) {
+func (a *account) UpdateOwner(owner string) {
 	a.ApplyChange(event.OwnerUpdated{Owner: owner})
 }
