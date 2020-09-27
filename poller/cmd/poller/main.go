@@ -58,11 +58,8 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sinker, err := sink.NewNatsSink(cfg.ConfigNats.Topic, 0,
+	sinker := sink.NewNatsSink(cfg.ConfigNats.Topic, 0,
 		"test-cluster", "poller-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
-	if err != nil {
-		log.Fatalf("Error instantiating Sinker: %v", err)
-	}
 
 	defer sinker.Close()
 
@@ -86,7 +83,7 @@ func main() {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	monitor := common.NewBootMonitor(bootable, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
+	monitor := common.NewBootMonitor("PostgreSQL Poller -> NATS feed", bootable, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
 	go monitor.Start(ctx)
 
 	go player.StartGrpcServer(ctx, cfg.GrpcAddress, repo)
