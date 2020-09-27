@@ -23,4 +23,19 @@ CREATE TABLE IF NOT EXISTS snapshots(
     FOREIGN KEY (id) REFERENCES events (id)
     );
     CREATE INDEX aggregate_id_idx ON snapshots (aggregate_id);
-    
+
+CREATE OR REPLACE FUNCTION notify_event() RETURNS TRIGGER AS $FN$
+    DECLARE 
+        notification json;
+    BEGIN
+        notification = row_to_json(NEW);
+        PERFORM pg_notify('events_channel', notification::text);
+        
+        -- Result is ignored since this is an AFTER trigger
+        RETURN NULL; 
+    END;
+$FN$ LANGUAGE plpgsql;
+
+CREATE TRIGGER events_notify_event
+AFTER INSERT ON events
+    FOR EACH ROW EXECUTE PROCEDURE notify_event();
