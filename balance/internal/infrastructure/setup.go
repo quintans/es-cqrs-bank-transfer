@@ -74,7 +74,6 @@ func Setup(cfg Config) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// es player
 	esRepo := player.NewGrpcRepository(cfg.EsAddress)
-	replayer := player.New(esRepo, 20)
 
 	// the clientID could be suffixed with low partition ID
 	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance-0", cfg.Topic, NotificationTopic)
@@ -93,7 +92,7 @@ func Setup(cfg Config) {
 	manager := projection.NewBootableManager(
 		prjCtrl,
 		natsSub,
-		replayer,
+		esRepo,
 		0, 0, // no partitioning range, meaning we will not use partitioned topic
 	)
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
@@ -101,7 +100,7 @@ func Setup(cfg Config) {
 	if err != nil {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
-	monitor := common.NewBootMonitor(manager, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
+	monitor := common.NewBootMonitor("Balance Projection", manager, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
 	go monitor.Start(ctx)
 
 	restCtrl := controller.RestController{
