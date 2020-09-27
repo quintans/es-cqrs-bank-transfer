@@ -12,3 +12,4 @@ require (
 )
 
 replace github.com/quintans/es-cqrs-bank-transfer/account/shared => ./shared
+replace github.com/quintans/eventstore => ../../eventstore

@@ -33,6 +33,10 @@ type account struct {
 	Owner   string       `json:"owner,omitempty"`
 }
 
+func (a account) GetType() string {
+	return event.AggregateType_Account
+}
+
 func (a *account) HandleAccountCreated(e event.AccountCreated) {
 	a.ID = e.ID
 	a.Balance = e.Money

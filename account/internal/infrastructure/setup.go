@@ -20,7 +20,7 @@ type Config struct {
 	EsHost            string `env:"ES_HOST"`
 	EsPort            int    `env:"ES_PORT" envDefault:"5432"`
 	EsName            string `env:"ES_NAME" envDefault:"accounts"`
-	SnapshotThreshold int    `env:"SNAPSHOT_THRESHOLD" envDefault:"50"`
+	SnapshotThreshold uint32 `env:"SNAPSHOT_THRESHOLD" envDefault:"50"`
 }
 
 func Setup(cfg *Config) {
