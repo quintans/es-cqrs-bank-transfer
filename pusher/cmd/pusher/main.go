@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/caarlos0/env/v6"
-	_ "github.com/lib/pq"
 	"github.com/nats-io/stan.go"
 	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/feed"
@@ -44,7 +43,7 @@ type ConfigNats struct {
 }
 
 type ConfigPusher struct {
-	PgChannel string `env:"PG_CHANNEL" envDefault:"eventsourcing"`
+	PgChannel string `env:"PG_CHANNEL" envDefault:"events_channel"`
 }
 
 func init() {
@@ -58,12 +57,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sinker, err := sink.NewNatsSink(cfg.ConfigNats.Topic, 0,
-		"test-cluster", "pusher-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
-	if err != nil {
-		log.Fatalf("Error instantiating Sinker: %v", err)
-	}
-
+	sinker := sink.NewNatsSink(cfg.ConfigNats.Topic, 0, "test-cluster", "pusher-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
 	defer sinker.Close()
 
 	dbURL := fmt.Sprintf("postgres://%s:%s@%s:%d/%s?sslmode=disable", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort, cfg.EsName)
@@ -90,7 +84,7 @@ func main() {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	monitor := common.NewBootMonitor(bootable, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
+	monitor := common.NewBootMonitor("PostgreSQL -> NATS feeder", bootable, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
 	go monitor.Start(ctx)
 
 	go player.StartGrpcServer(ctx, cfg.GrpcAddress, repo)
