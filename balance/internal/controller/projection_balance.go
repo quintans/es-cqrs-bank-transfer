@@ -18,12 +18,14 @@ func (p ProjectionBalance) GetName() string {
 	return domain.ProjectionBalance
 }
 
-func (p ProjectionBalance) GetAggregateTypes() []string {
-	return []string{event.AggregateType_Account}
-}
-
-func (p ProjectionBalance) GetResumeEventID(ctx context.Context) (string, error) {
-	return p.BalanceUsecase.GetLastEventID(ctx)
+func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context) (map[string]string, error) {
+	lastEventID, err := p.BalanceUsecase.GetLastEventID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]string{
+		event.AggregateType_Account: lastEventID,
+	}, nil
 }
 
 func (p ProjectionBalance) Handler(ctx context.Context, e eventstore.Event) error {

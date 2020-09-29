@@ -11,6 +11,7 @@ import (
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
@@ -83,7 +84,7 @@ func Setup(cfg Config) {
 
 	balanceUC := usecase.BalanceUsecase{
 		BalanceRepository: repo,
-		Subscriber:        natsSub,
+		Notifier:          natsSub,
 	}
 
 	prjCtrl := controller.ProjectionBalance{
@@ -92,8 +93,12 @@ func Setup(cfg Config) {
 	manager := projection.NewBootableManager(
 		prjCtrl,
 		natsSub,
-		esRepo,
-		0, 0, // no partitioning range, meaning we will not use partitioned topic
+		projection.BootStages{
+			AggregateTypes: []string{event.AggregateType_Account},
+			Subscriber:     natsSub,
+			Repository:     esRepo,
+			// no partitioning range, meaning we will not use partitioned topic
+		},
 	)
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
 	locker, err := locks.NewRedisLock(cfg.RedisAddresses, "balance", cfg.LockExpiry)

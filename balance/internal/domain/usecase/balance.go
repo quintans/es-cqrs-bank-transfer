@@ -19,7 +19,7 @@ var (
 
 type BalanceUsecase struct {
 	BalanceRepository domain.BalanceRepository
-	Subscriber        projection.Subscriber
+	Notifier          projection.Notifier
 }
 
 func (b BalanceUsecase) ListAll(ctx context.Context) ([]entity.Balance, error) {
@@ -108,7 +108,7 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 		"method": "BalanceUsecase.RebuildBalance",
 	})
 	logger.Info("Signalling to STOP the balance projection listener")
-	err := b.Subscriber.FreezeProjection(ctx, domain.ProjectionBalance)
+	err := b.Notifier.FreezeProjection(ctx, domain.ProjectionBalance)
 	if err != nil {
 		log.WithError(err).Errorf("Error while freezing projection %s", domain.ProjectionBalance)
 		return err
@@ -121,7 +121,7 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 	}
 
 	logger.Info("Signalling to START the balance projection listener")
-	return b.Subscriber.UnfreezeProjection(ctx, domain.ProjectionBalance)
+	return b.Notifier.UnfreezeProjection(ctx, domain.ProjectionBalance)
 }
 
 func (b BalanceUsecase) GetLastEventID(ctx context.Context) (string, error) {

@@ -9,7 +9,7 @@ require (
 	github.com/kr/pretty v0.2.0 // indirect
 	github.com/labstack/echo/v4 v4.1.16
 	github.com/quintans/es-cqrs-bank-transfer/account/shared v0.0.0
-	github.com/quintans/eventstore v0.6.0
+	github.com/quintans/eventstore v0.7.0
 	github.com/quintans/toolkit v0.0.3
 	github.com/sirupsen/logrus v1.6.0
 	golang.org/x/sys v0.0.0-20200720211630-cb9d2d5c5666 // indirect
