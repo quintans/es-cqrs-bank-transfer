@@ -17,3 +17,5 @@ require (
 )
 
 replace github.com/quintans/es-cqrs-bank-transfer/account/shared => ../account/shared
+
+replace github.com/quintans/eventstore => ../../eventstore

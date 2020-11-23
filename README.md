@@ -5,9 +5,9 @@ This project is a way to play around with event sourcing and CQRS.
 Here I followed the more complex path, where I tried to have an architecture to handle a high throughput.
 
 This project has several moving pieces
-* PostgreSQL: the event store database
+* MongoDB: the event store database
 * Account Service: the write side of things. This writes into the event store.
-* Poller Service: periodically pools (less 1s) the event store for new events and publish them into a MQ. Only one instance will be running at a given time.
+* Pusher Service: Listens the event store for new events and publish them into a MQ. Only one instance will be running at a given time.
 * Balance Service: reads the MQ and updates its projection(s). The projections listeners will only be active in one of the instances. To guarantee that, we use distributed locking.
 * NATS: the message queue
 * Elasticsearch: the projection database

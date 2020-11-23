@@ -1,4 +1,4 @@
-version: '3'
+version: '3.4'
 
 networks:
   my-network:
@@ -67,7 +67,6 @@ services:
       timeout: 45s
       interval: 10s
       retries: 10
-    restart: always
     environment:
       - POSTGRES_USER=root
       - POSTGRES_PASSWORD=password
@@ -118,17 +117,23 @@ services:
       - my-network
 
   # https://medium.com/@renato.groffe/mongodb-mongo-express-docker-compose-montando-rapidamente-um-ambiente-para-uso-824f25ca6957
-  mongodb:
+  mongo:
     image: mongo:latest
     environment:
       MONGO_INITDB_ROOT_USERNAME: root
       MONGO_INITDB_ROOT_PASSWORD: password
+      # MONGO_REPLICA_SET_NAME: rs0
     ports:
       - 27017:27017
     volumes:
       - mongodb_data:/data/db
     networks:
       - my-network
+    # command: ["--replSet", "rs0", "--bind_ip_all"]
+    # healthcheck:
+    #   test: test $$(echo "rs.initiate().ok || rs.status().ok" | mongo -u root -p password --quiet) -eq 1
+    #   interval: 10s
+    #   start_period: 30s
 
   mongo-express:
     image: mongo-express
@@ -141,9 +146,9 @@ services:
       ME_CONFIG_MONGODB_ADMINUSERNAME: root
       ME_CONFIG_MONGODB_ADMINPASSWORD: password
     depends_on:
-      - mongodb
+      - mongo
     links:
-      - mongodb
+      - mongo
     networks:
       - my-network
 

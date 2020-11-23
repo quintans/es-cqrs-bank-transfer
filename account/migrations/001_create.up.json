@@ -1,0 +1,42 @@
+[
+    {
+        "create": "events"
+    },
+    {
+        "createIndexes": "events",
+        "indexes": [
+            {
+                "key": {
+                    "aggregate_id": 1,
+                    "aggregate_version": 1
+                },
+                "name": "unique_aggregate_version",
+                "unique": true,
+                "background": true
+            },
+            {
+                "key": {
+                    "idempotency_key": 1,
+                    "aggregate_id": 1
+                },
+                "name": "idx_idempotency_aggregate",
+                "background": true
+            }
+        ]
+    },
+    {
+        "create": "snapshots"
+    },
+    {
+        "createIndexes": "snapshots",
+        "indexes": [
+            {
+                "key": {
+                    "aggregate_id": 1
+                },
+                "name": "idx_aggregate",
+                "background": true
+            }
+        ]
+    }
+]
