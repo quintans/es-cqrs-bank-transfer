@@ -1,4 +1,4 @@
-module github.com/quintans/es-cqrs-bank-transfer/pusher
+module github.com/quintans/es-cqrs-bank-transfer/forwarder
 
 go 1.15
 

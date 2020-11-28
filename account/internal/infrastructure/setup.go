@@ -11,11 +11,11 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/usecase"
 	"github.com/quintans/eventstore"
-	"github.com/quintans/eventstore/repo"
+	"github.com/quintans/eventstore/store/mongodb"
 	log "github.com/sirupsen/logrus"
 
 	"github.com/golang-migrate/migrate/v4"
-	"github.com/golang-migrate/migrate/v4/database/mongodb"
+	mg "github.com/golang-migrate/migrate/v4/database/mongodb"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -44,7 +44,7 @@ func Setup(cfg *Config) {
 	defer client.Disconnect(context.Background())
 
 	// evenstore
-	esRepo := repo.NewMongoEsRepositoryDB(client, cfg.EsName, entity.Factory{})
+	esRepo := mongodb.NewStoreDB(client, cfg.EsName, entity.Factory{})
 	es := eventstore.NewEventStore(esRepo, cfg.SnapshotThreshold)
 
 	// Usecases
@@ -88,7 +88,7 @@ func newDB(dbURL string) (*mongo.Client, error) {
 }
 
 func migration(dbURL string) error {
-	p := &mongodb.Mongo{}
+	p := &mg.Mongo{}
 	d, err := p.Open(dbURL)
 	if err != nil {
 		return err

@@ -7,7 +7,7 @@ Here I followed the more complex path, where I tried to have an architecture to 
 This project has several moving pieces
 * MongoDB: the event store database
 * Account Service: the write side of things. This writes into the event store.
-* Pusher Service: Listens the event store for new events and publish them into a MQ. Only one instance will be running at a given time.
+* Forwarder Service: Listens the event store for new events and publish them into a MQ. Only one instance will be running at a given time.
 * Balance Service: reads the MQ and updates its projection(s). The projections listeners will only be active in one of the instances. To guarantee that, we use distributed locking.
 * NATS: the message queue
 * Elasticsearch: the projection database

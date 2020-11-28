@@ -20,9 +20,9 @@ services:
     ports:
       - 8000:8000
 
-  svc-pusher:
+  svc-forwarder:
     build: 
-      context: ./pusher
+      context: ./forwarder
       # dockerfile: ./Dockerfile
     depends_on:
       - database
@@ -47,12 +47,12 @@ services:
       - nats
       - elastic
       - redis
-      - svc-pusher
+      - svc-forwarder
     environment:
       - NATS_ADDRESS=nats:4222
       - TOPIC=accounts
       - REDIS_ADDRESSES=redis:6379
-      - ES_ADDRESS=svc-pusher:3000
+      - ES_ADDRESS=svc-forwarder:3000
       - ELASTIC_ADDRESSES=http://localhost:9200
       - REDIS_ADDRESSES=localhost:6379
     networks:
