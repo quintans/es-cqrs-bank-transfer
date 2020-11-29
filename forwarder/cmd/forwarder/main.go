@@ -10,7 +10,6 @@ import (
 
 	"github.com/caarlos0/env/v6"
 	"github.com/nats-io/stan.go"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/sink"
@@ -76,7 +75,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	go monitor.Start(ctx)
 
-	repo, err := mongodb.NewStore(dbURL, cfg.EsName, event.EventFactory{})
+	repo, err := mongodb.NewStore(dbURL, cfg.EsName)
 	if err != nil {
 		log.Fatalf("Error instantiating event store: %v", err)
 	}

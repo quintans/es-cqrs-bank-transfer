@@ -11,6 +11,18 @@ import (
 
 type ProjectionBalance struct {
 	BalanceUsecase domain.BalanceUsecase
+	factory        eventstore.Factory
+	codec          eventstore.Codec
+	upcaster       eventstore.Upcaster
+}
+
+func NewProjectionBalance(balanceUsecase domain.BalanceUsecase, factory eventstore.Factory, codec eventstore.Codec, upcaster eventstore.Upcaster) ProjectionBalance {
+	return ProjectionBalance{
+		BalanceUsecase: balanceUsecase,
+		factory:        factory,
+		codec:          codec,
+		upcaster:       upcaster,
+	}
 }
 
 func (p ProjectionBalance) GetName() string {
@@ -39,7 +51,7 @@ func (p ProjectionBalance) Handler(ctx context.Context, e eventstore.Event) erro
 		EventID:     e.ID,
 	}
 
-	evt, err := e.Decode()
+	evt, err := eventstore.Decode(p.factory, p.codec, p.upcaster, e.Kind, e.Body)
 	if err != nil {
 		return err
 	}

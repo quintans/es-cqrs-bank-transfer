@@ -44,8 +44,8 @@ func Setup(cfg *Config) {
 	defer client.Disconnect(context.Background())
 
 	// evenstore
-	esRepo := mongodb.NewStoreDB(client, cfg.EsName, entity.Factory{})
-	es := eventstore.NewEventStore(esRepo, cfg.SnapshotThreshold)
+	esRepo := mongodb.NewStoreDB(client, cfg.EsName)
+	es := eventstore.NewEventStore(esRepo, cfg.SnapshotThreshold, entity.Factory{})
 
 	// Usecases
 	uc := usecase.NewAccountUsecase(es)

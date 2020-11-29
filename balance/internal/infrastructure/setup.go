@@ -74,7 +74,7 @@ func Setup(cfg Config) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// es player
-	esRepo := player.NewGrpcRepository(cfg.EsAddress, event.EventFactory{})
+	esRepo := player.NewGrpcRepository(cfg.EsAddress)
 
 	// the clientID could be suffixed with low partition ID
 	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance-0", cfg.Topic, NotificationTopic)
