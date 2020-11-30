@@ -31,24 +31,25 @@ func (uc AccountUsecase) Create(ctx context.Context, createAccount domain.Create
 		"method": "AccountUsecase.Create",
 	}).Infof("Creating account with owner:%s, id: %s, money: %d", createAccount.Owner, id, createAccount.Money)
 	acc := entity.CreateAccount(createAccount.Owner, id, createAccount.Money)
-	if err := uc.es.Save(ctx, acc, eventstore.Options{}); err != nil {
+	if err := uc.es.Save(ctx, acc); err != nil {
 		return "", err
 	}
 	return id, nil
 }
 
 func (uc AccountUsecase) Deposit(ctx context.Context, cmd domain.DepositCommand) error {
-	acc := entity.NewAccount()
-	if err := uc.es.GetByID(ctx, cmd.ID, acc); err != nil {
+	a, err := uc.es.GetByID(ctx, cmd.ID)
+	if err != nil {
 		return err
 	}
+	acc := a.(*entity.Account)
 
 	log.WithFields(log.Fields{
 		"method": "AccountUsecase.Deposit",
 	}).Infof("Depositing id: %s, money: %d", cmd.ID, cmd.Money)
 	acc.Deposit(cmd.Money)
 
-	if err := uc.es.Save(ctx, acc, eventstore.Options{}); err != nil {
+	if err := uc.es.Save(ctx, acc); err != nil {
 		return err
 	}
 
@@ -56,16 +57,17 @@ func (uc AccountUsecase) Deposit(ctx context.Context, cmd domain.DepositCommand)
 }
 
 func (uc AccountUsecase) Withdraw(ctx context.Context, cmd domain.WithdrawCommand) error {
-	acc := entity.NewAccount()
-	if err := uc.es.GetByID(ctx, cmd.ID, acc); err != nil {
+	a, err := uc.es.GetByID(ctx, cmd.ID)
+	if err != nil {
 		return err
 	}
+	acc := a.(*entity.Account)
 
 	log.WithFields(log.Fields{
 		"method": "AccountUsecase.Withdraw",
 	}).Infof("Depositing id: %s, money: %d", cmd.ID, cmd.Money)
 	if acc.Withdraw(cmd.Money) {
-		return uc.es.Save(ctx, acc, eventstore.Options{})
+		return uc.es.Save(ctx, acc)
 	}
 
 	return ErrNotEnoughFunds

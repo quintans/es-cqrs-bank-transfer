@@ -54,15 +54,12 @@ func main() {
 	sinker := sink.NewNatsSink(cfg.ConfigNats.Topic, 0, "test-cluster", "pusher-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
 	defer sinker.Close()
 
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-
 	dbURL := fmt.Sprintf("mongodb://%s:%s@%s:%d?connect=direct", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort)
 	listener, err := mongodb.NewFeed(dbURL, cfg.EsName)
 	if err != nil {
 		log.Fatalf("Error instantiating store listener: %v", err)
 	}
-	bootable := store.NewForwarder(
+	forwarder := store.NewForwarder(
 		listener,
 		sinker,
 	)
@@ -71,7 +68,7 @@ func main() {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	monitor := common.NewBootMonitor("MongoDB -> NATS feeder", bootable, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
+	monitor := common.NewBootMonitor("MongoDB -> NATS feeder", forwarder, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
 	ctx, cancel := context.WithCancel(context.Background())
 	go monitor.Start(ctx)
 
@@ -81,6 +78,8 @@ func main() {
 	}
 	go player.StartGrpcServer(ctx, cfg.GrpcAddress, repo)
 
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	cancel()
 }

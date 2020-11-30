@@ -90,14 +90,9 @@ type Factory struct {
 	Factory eventstore.Factory
 }
 
-func (f Factory) New(kind string) (interface{}, error) {
-	var e interface{}
-	switch kind {
-	case event.AggregateType_Account:
-		e = &Account{}
+func (f Factory) New(kind string) (eventstore.Typer, error) {
+	if kind == event.AggregateType_Account {
+		return NewAccount(), nil
 	}
-	if e == nil {
-		return f.Factory.New(kind)
-	}
-	return e, nil
+	return f.Factory.New(kind)
 }

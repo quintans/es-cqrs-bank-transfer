@@ -51,7 +51,7 @@ func (p ProjectionBalance) Handler(ctx context.Context, e eventstore.Event) erro
 		EventID:     e.ID,
 	}
 
-	evt, err := eventstore.Decode(p.factory, p.codec, p.upcaster, e.Kind, e.Body)
+	evt, err := eventstore.RehydrateEvent(p.factory, p.codec, p.upcaster, e.Kind, e.Body)
 	if err != nil {
 		return err
 	}
