@@ -21,8 +21,9 @@ import (
 
 type Config struct {
 	RedisAddresses []string      `env:"REDIS_ADDRESSES" envSeparator:","`
-	LockExpiry     time.Duration `env:"LOCK_EXPIRY" envDefault:"20s"`
+	LockExpiry     time.Duration `env:"LOCK_EXPIRY" envDefault:"2s"`
 	GrpcAddress    string        `env:"ES_ADDRESS" envDefault:":3000"`
+	PartitionSlots []string      `env:"PARTITION_SLOTS" envSeparator:","`
 	ConfigEs
 	ConfigNats
 }
@@ -51,26 +52,46 @@ func main() {
 		log.Fatal(err)
 	}
 
-	sinker := sink.NewNatsSink(cfg.ConfigNats.Topic, 0, "test-cluster", "pusher-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
+	partitionSlots, err := common.ParseSlots(cfg.PartitionSlots)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var partitionsNo uint32
+	for _, ps := range partitionSlots {
+		partitionsNo += ps.Size()
+	}
+
+	sinker := sink.NewNatsSink(cfg.ConfigNats.Topic, partitionsNo, "test-cluster", "pusher-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
 	defer sinker.Close()
 
 	dbURL := fmt.Sprintf("mongodb://%s:%s@%s:%d?connect=direct", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort)
-	listener, err := mongodb.NewFeed(dbURL, cfg.EsName)
-	if err != nil {
-		log.Fatalf("Error instantiating store listener: %v", err)
-	}
-	forwarder := store.NewForwarder(
-		listener,
-		sinker,
-	)
-	locker, err := locks.NewRedisLock(cfg.RedisAddresses, "pusher", cfg.LockExpiry)
+	pool, err := locks.NewRedisLockPool(cfg.RedisAddresses)
 	if err != nil {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	monitor := common.NewBootMonitor("MongoDB -> NATS feeder", forwarder, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
+	size := len(partitionSlots)
+	lockMonitors := make([]common.LockMonitor, size)
+	for i := 0; i < size; i++ {
+		listener, err := mongodb.NewFeed(dbURL, cfg.EsName)
+		if err != nil {
+			log.Fatalf("Error instantiating store listener: %v", err)
+		}
+		forwarder := store.NewForwarder(
+			listener,
+			sinker,
+		)
+
+		monitor := common.NewBootMonitor("MongoDB -> NATS feeder", forwarder, common.WithRefreshInterval(cfg.LockExpiry/2))
+		lockMonitors[i] = common.LockMonitor{
+			Lock:    pool.NewLock("forwarder-lock", cfg.LockExpiry),
+			Monitor: &monitor,
+		}
+	}
+
 	ctx, cancel := context.WithCancel(context.Background())
-	go monitor.Start(ctx)
+	memberlist := common.NewRedisMemberlist(cfg.RedisAddresses[0], "forwarder-member", cfg.LockExpiry)
+	go common.BalancePartitions(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
 
 	repo, err := mongodb.NewStore(dbURL, cfg.EsName)
 	if err != nil {

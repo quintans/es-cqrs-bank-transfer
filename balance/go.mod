@@ -12,10 +12,10 @@ require (
 	github.com/quintans/eventstore v0.7.0
 	github.com/quintans/toolkit v0.0.3
 	github.com/sirupsen/logrus v1.6.0
-	golang.org/x/sys v0.0.0-20200720211630-cb9d2d5c5666 // indirect
 	gopkg.in/check.v1 v1.0.0-20190902080502-41f04d3bba15 // indirect
 )
 
 replace github.com/quintans/es-cqrs-bank-transfer/account/shared => ../account/shared
 
 replace github.com/quintans/eventstore => ../../eventstore
+replace github.com/quintans/toolkit => ../../toolkit

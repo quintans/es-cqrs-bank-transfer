@@ -34,6 +34,7 @@ services:
       - NATS_ADDRESS=nats:4222
       - TOPIC=accounts
       - REDIS_ADDRESSES=localhost:6379
+      - PARTITION_SLOTS=1,2 # expect max 2 instances, one partition each
     networks:
       - my-network
     ports:
@@ -55,6 +56,7 @@ services:
       - ES_ADDRESS=svc-forwarder:3000
       - ELASTIC_ADDRESSES=http://localhost:9200
       - REDIS_ADDRESSES=localhost:6379
+      - PARTITION_SLOTS=1,2 # expect max 2 instances, one partition each
     networks:
       - my-network
     ports:

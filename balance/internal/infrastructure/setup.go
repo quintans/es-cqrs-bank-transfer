@@ -30,6 +30,7 @@ const (
 type Config struct {
 	ApiPort          int      `env:"API_PORT" envDefault:"8030"`
 	ElasticAddresses []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
+	PartitionSlots   []string `env:"PARTITION_SLOTS" envSeparator:","`
 	ConfigEs
 	ConfigRedis
 	ConfigNats
@@ -90,23 +91,40 @@ func Setup(cfg Config) {
 	prjCtrl := controller.ProjectionBalance{
 		BalanceUsecase: balanceUC,
 	}
-	manager := projection.NewBootableManager(
-		prjCtrl,
-		natsSub,
-		projection.BootStages{
-			AggregateTypes: []string{event.AggregateType_Account},
-			Subscriber:     natsSub,
-			Repository:     esRepo,
-			// no partitioning range, meaning we will not use partitioned topic
-		},
-	)
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
-	locker, err := locks.NewRedisLock(cfg.RedisAddresses, "balance", cfg.LockExpiry)
+	pool, err := locks.NewRedisLockPool(cfg.RedisAddresses)
 	if err != nil {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
-	monitor := common.NewBootMonitor("Balance Projection", manager, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
-	go monitor.Start(ctx)
+
+	partitionSlots, err := common.ParseSlots(cfg.PartitionSlots)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	lockMonitors := make([]common.LockMonitor, len(partitionSlots))
+	for i, v := range partitionSlots {
+		manager := projection.NewBootableManager(
+			prjCtrl,
+			natsSub,
+			projection.BootStage{
+				AggregateTypes: []string{event.AggregateType_Account},
+				Subscriber:     natsSub,
+				Repository:     esRepo,
+				PartitionLo:    v.From,
+				PartitionHi:    v.To,
+			},
+		)
+		monitor := common.NewBootMonitor("Balance Projection", manager, common.WithRefreshInterval(cfg.LockExpiry/2))
+
+		lockMonitors[i] = common.LockMonitor{
+			Lock:    pool.NewLock("balance-lock", cfg.LockExpiry),
+			Monitor: &monitor,
+		}
+	}
+
+	memberlist := common.NewRedisMemberlist(cfg.RedisAddresses[0], "balance-member", cfg.LockExpiry)
+	go common.BalancePartitions(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,
