@@ -71,7 +71,7 @@ func main() {
 	}
 
 	size := len(partitionSlots)
-	lockMonitors := make([]common.LockMonitor, size)
+	lockMonitors := make([]common.LockWorker, size)
 	for i := 0; i < size; i++ {
 		listener, err := mongodb.NewFeed(dbURL, cfg.EsName)
 		if err != nil {
@@ -83,15 +83,15 @@ func main() {
 		)
 
 		monitor := common.NewBootMonitor("MongoDB -> NATS feeder", forwarder, common.WithRefreshInterval(cfg.LockExpiry/2))
-		lockMonitors[i] = common.LockMonitor{
-			Lock:    pool.NewLock("forwarder-lock", cfg.LockExpiry),
-			Monitor: &monitor,
+		lockMonitors[i] = common.LockWorker{
+			Lock:   pool.NewLock("forwarder-lock", cfg.LockExpiry),
+			Worker: &monitor,
 		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	memberlist := common.NewRedisMemberlist(cfg.RedisAddresses[0], "forwarder-member", cfg.LockExpiry)
-	go common.BalancePartitions(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
+	go common.BalanceWorkers(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
 
 	repo, err := mongodb.NewStore(dbURL, cfg.EsName)
 	if err != nil {

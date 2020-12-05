@@ -102,7 +102,7 @@ func Setup(cfg Config) {
 		log.Fatal(err)
 	}
 
-	lockMonitors := make([]common.LockMonitor, len(partitionSlots))
+	lockMonitors := make([]common.LockWorker, len(partitionSlots))
 	for i, v := range partitionSlots {
 		manager := projection.NewBootableManager(
 			prjCtrl,
@@ -117,14 +117,14 @@ func Setup(cfg Config) {
 		)
 		monitor := common.NewBootMonitor("Balance Projection", manager, common.WithRefreshInterval(cfg.LockExpiry/2))
 
-		lockMonitors[i] = common.LockMonitor{
-			Lock:    pool.NewLock("balance-lock", cfg.LockExpiry),
-			Monitor: &monitor,
+		lockMonitors[i] = common.LockWorker{
+			Lock:   pool.NewLock("balance-lock", cfg.LockExpiry),
+			Worker: &monitor,
 		}
 	}
 
 	memberlist := common.NewRedisMemberlist(cfg.RedisAddresses[0], "balance-member", cfg.LockExpiry)
-	go common.BalancePartitions(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
+	go common.BalanceWorkers(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,
