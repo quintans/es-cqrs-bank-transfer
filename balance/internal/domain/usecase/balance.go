@@ -18,12 +18,21 @@ var (
 )
 
 type BalanceUsecase struct {
-	BalanceRepository domain.BalanceRepository
-	Notifier          projection.Notifier
+	balanceRepository domain.BalanceRepository
+	restarter         projection.Restarter
+	partitions        int
+}
+
+func NewBalanceUsecase(balanceRepository domain.BalanceRepository, restarter projection.Restarter, partitions int) BalanceUsecase {
+	return BalanceUsecase{
+		balanceRepository: balanceRepository,
+		restarter:         restarter,
+		partitions:        partitions,
+	}
 }
 
 func (b BalanceUsecase) ListAll(ctx context.Context) ([]entity.Balance, error) {
-	return b.BalanceRepository.GetAllOrderByOwnerAsc(ctx)
+	return b.balanceRepository.GetAllOrderByOwnerAsc(ctx)
 }
 
 func (b BalanceUsecase) AccountCreated(ctx context.Context, m domain.Metadata, ac event.AccountCreated) error {
@@ -44,7 +53,7 @@ func (b BalanceUsecase) AccountCreated(ctx context.Context, m domain.Metadata, a
 		Balance: ac.Money,
 	}
 	logger.Infof("Creating account: ID: %s, Owner: %s, Balance: %d", ac.ID, ac.Owner, ac.Money)
-	return b.BalanceRepository.CreateAccount(ctx, e)
+	return b.balanceRepository.CreateAccount(ctx, e)
 }
 
 func (b BalanceUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata, ac event.MoneyDeposited) error {
@@ -55,7 +64,7 @@ func (b BalanceUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata, a
 	if err != nil || ignore {
 		return err
 	}
-	agg, err := b.BalanceRepository.GetByID(ctx, m.AggregateID)
+	agg, err := b.balanceRepository.GetByID(ctx, m.AggregateID)
 	if agg.IsZero() {
 		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
@@ -65,7 +74,7 @@ func (b BalanceUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata, a
 		EventID: m.EventID,
 		Balance: agg.Balance + ac.Money,
 	}
-	return b.BalanceRepository.Update(ctx, update)
+	return b.balanceRepository.Update(ctx, update)
 }
 
 func (b BalanceUsecase) MoneyWithdrawn(ctx context.Context, m domain.Metadata, ac event.MoneyWithdrawn) error {
@@ -76,7 +85,7 @@ func (b BalanceUsecase) MoneyWithdrawn(ctx context.Context, m domain.Metadata, a
 	if err != nil || ignore {
 		return err
 	}
-	agg, err := b.BalanceRepository.GetByID(ctx, m.AggregateID)
+	agg, err := b.balanceRepository.GetByID(ctx, m.AggregateID)
 	if agg.IsZero() {
 		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
@@ -86,11 +95,11 @@ func (b BalanceUsecase) MoneyWithdrawn(ctx context.Context, m domain.Metadata, a
 		EventID: m.EventID,
 		Balance: agg.Balance - ac.Money,
 	}
-	return b.BalanceRepository.Update(ctx, update)
+	return b.balanceRepository.Update(ctx, update)
 }
 
 func (b BalanceUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry, m domain.Metadata) (bool, error) {
-	lastEventID, err := b.BalanceRepository.GetEventID(ctx, m.AggregateID)
+	lastEventID, err := b.balanceRepository.GetEventID(ctx, m.AggregateID)
 	if err != nil {
 		return false, err
 	}
@@ -107,26 +116,17 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.RebuildBalance",
 	})
-	logger.Info("Signalling to STOP the balance projection listener")
-	err := b.Notifier.FreezeProjection(ctx, domain.ProjectionBalance)
-	if err != nil {
-		log.WithError(err).Errorf("Error while freezing projection %s", domain.ProjectionBalance)
-		return err
-	}
 
-	logger.Info("Cleaning all balance data")
-	err = b.BalanceRepository.ClearAllData(ctx)
-	if err != nil {
-		return err
-	}
+	return b.restarter.Restart(ctx, domain.ProjectionBalance, b.partitions, func(ctx context.Context) error {
+		logger.Info("Cleaning all balance data")
+		return b.balanceRepository.ClearAllData(ctx)
+	})
 
-	logger.Info("Signalling to START the balance projection listener")
-	return b.Notifier.UnfreezeProjection(ctx, domain.ProjectionBalance)
 }
 
 func (b BalanceUsecase) GetLastEventID(ctx context.Context) (string, error) {
 	// get the latest event ID from the eventstore
-	eventID, err := b.BalanceRepository.GetMaxEventID(ctx)
+	eventID, err := b.balanceRepository.GetMaxEventID(ctx)
 	if err != nil {
 		return "", fmt.Errorf("Could not get last event ID: %w", err)
 	}

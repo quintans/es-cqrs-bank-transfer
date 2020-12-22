@@ -27,13 +27,13 @@ services:
     depends_on:
       - database
       - nats
-      - redis
+      - consul
     environment:
       - ES_HOST=database
       - ES_NAME=accounts
       - NATS_ADDRESS=nats:4222
       - TOPIC=accounts
-      - REDIS_ADDRESSES=localhost:6379
+      - CONSUL_ADDRESS=localhost:8300
       - PARTITION_SLOTS=1,2 # expect max 2 instances, one partition each
     networks:
       - my-network
@@ -47,16 +47,16 @@ services:
     depends_on:
       - nats
       - elastic
-      - redis
+      - consul
       - svc-forwarder
     environment:
       - NATS_ADDRESS=nats:4222
       - TOPIC=accounts
-      - REDIS_ADDRESSES=redis:6379
+      - CONSUL_ADDRESS=consul:8500
       - ES_ADDRESS=svc-forwarder:3000
       - ELASTIC_ADDRESSES=http://localhost:9200
-      - REDIS_ADDRESSES=localhost:6379
-      - PARTITION_SLOTS=1,2 # expect max 2 instances, one partition each
+      - PARTITIONS=2
+      - BALANCE_PARTITIONS=1,2 # expect max 2 instances, one partition each
     networks:
       - my-network
     ports:
@@ -111,10 +111,21 @@ services:
     networks:
       - my-network
 
-  redis:
-    image: "redis:alpine"
+  # redis:
+  #   image: "redis:alpine"
+  #   ports:
+  #     - "6379:6379"
+  #   networks:
+  #     - my-network
+  consul:
+    image: bitnami/consul:latest
     ports:
-      - "6379:6379"
+      - '8300:8300'
+      - '8301:8301'
+      - '8301:8301/udp'
+      - '8500:8500'
+      - '8600:8600'
+      - '8600:8600/udp'
     networks:
       - my-network
 

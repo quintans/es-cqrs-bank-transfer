@@ -28,9 +28,10 @@ const (
 )
 
 type Config struct {
-	ApiPort          int      `env:"API_PORT" envDefault:"8030"`
-	ElasticAddresses []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
-	PartitionSlots   []string `env:"PARTITION_SLOTS" envSeparator:","`
+	ApiPort           int      `env:"API_PORT" envDefault:"8030"`
+	ElasticAddresses  []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
+	Partitions        int      `env:"PARTITIONS"`
+	BalancePartitions []string `env:"BALANCE_PARTITIONS" envSeparator:","`
 	ConfigEs
 	ConfigRedis
 	ConfigNats
@@ -42,8 +43,8 @@ type ConfigEs struct {
 }
 
 type ConfigRedis struct {
-	RedisAddresses []string      `env:"REDIS_ADDRESSES" envSeparator:","`
-	LockExpiry     time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
+	ConsulAddress string        `env:"CONSUL_ADDRESS"`
+	LockExpiry    time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
 }
 
 type ConfigNats struct {
@@ -83,48 +84,55 @@ func Setup(cfg Config) {
 		log.Fatalf("Error creating NATS subscriber: %s", err)
 	}
 
-	balanceUC := usecase.BalanceUsecase{
-		BalanceRepository: repo,
-		Notifier:          natsSub,
-	}
-
-	prjCtrl := controller.ProjectionBalance{
-		BalanceUsecase: balanceUC,
-	}
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
-	pool, err := locks.NewRedisLockPool(cfg.RedisAddresses)
+	pool, err := locks.NewConsulLockPool(cfg.ConsulAddress)
 	if err != nil {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	partitionSlots, err := common.ParseSlots(cfg.PartitionSlots)
+	balanceRebuild := pool.NewLock("balance-freeze", cfg.LockExpiry)
+	restarter := projection.NewNotifierLockRestarter(
+		balanceRebuild,
+		natsSub,
+	)
+	balanceUC := usecase.NewBalanceUsecase(repo, restarter, cfg.Partitions)
+
+	prjCtrl := controller.ProjectionBalance{
+		BalanceUsecase: balanceUC,
+	}
+
+	balancePartitions, err := common.ParseSlots(cfg.BalancePartitions)
 	if err != nil {
 		log.Fatal(err)
 	}
+	if len(balancePartitions) != cfg.Partitions {
+		log.Fatal("Wrong size for Balance Partitions ranges. Expected %d, got %d", cfg.Partitions, len(balancePartitions))
+	}
 
-	lockMonitors := make([]common.LockWorker, len(partitionSlots))
-	for i, v := range partitionSlots {
-		manager := projection.NewBootableManager(
-			prjCtrl,
-			natsSub,
-			projection.BootStage{
-				AggregateTypes: []string{event.AggregateType_Account},
-				Subscriber:     natsSub,
-				Repository:     esRepo,
-				PartitionLo:    v.From,
-				PartitionHi:    v.To,
-			},
-		)
-		monitor := common.NewBootMonitor("Balance Projection", manager, common.WithRefreshInterval(cfg.LockExpiry/2))
-
-		lockMonitors[i] = common.LockWorker{
-			Lock:   pool.NewLock("balance-lock", cfg.LockExpiry),
-			Worker: &monitor,
+	workers := make([]common.LockWorker, len(balancePartitions))
+	for i, v := range balancePartitions {
+		workers[i] = common.LockWorker{
+			Lock: pool.NewLock("balance-worker", cfg.LockExpiry),
+			Worker: common.NewRunWorker("Balance Projection", projection.NewProjectionPartition(
+				balanceRebuild,
+				prjCtrl,
+				natsSub,
+				projection.BootStage{
+					AggregateTypes: []string{event.AggregateType_Account},
+					Subscriber:     natsSub,
+					Repository:     esRepo,
+					PartitionLo:    v.From,
+					PartitionHi:    v.To,
+				},
+			)),
 		}
 	}
 
-	memberlist := common.NewRedisMemberlist(cfg.RedisAddresses[0], "balance-member", cfg.LockExpiry)
-	go common.BalanceWorkers(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
+	memberlist, err := common.NewConsulMemberList(cfg.ConsulAddress, "balance-member", cfg.LockExpiry)
+	if err != nil {
+		log.Fatal(err)
+	}
+	go common.BalanceWorkers(ctx, memberlist, workers, cfg.LockExpiry/2)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,

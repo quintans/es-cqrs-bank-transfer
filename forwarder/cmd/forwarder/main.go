@@ -20,7 +20,7 @@ import (
 )
 
 type Config struct {
-	RedisAddresses []string      `env:"REDIS_ADDRESSES" envSeparator:","`
+	ConsulAddress  string        `env:"CONSUL_ADDRESS"`
 	LockExpiry     time.Duration `env:"LOCK_EXPIRY" envDefault:"2s"`
 	GrpcAddress    string        `env:"ES_ADDRESS" envDefault:":3000"`
 	PartitionSlots []string      `env:"PARTITION_SLOTS" envSeparator:","`
@@ -65,7 +65,7 @@ func main() {
 	defer sinker.Close()
 
 	dbURL := fmt.Sprintf("mongodb://%s:%s@%s:%d?connect=direct", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort)
-	pool, err := locks.NewRedisLockPool(cfg.RedisAddresses)
+	pool, err := locks.NewConsulLockPool(cfg.ConsulAddress)
 	if err != nil {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
@@ -77,20 +77,18 @@ func main() {
 		if err != nil {
 			log.Fatalf("Error instantiating store listener: %v", err)
 		}
-		forwarder := store.NewForwarder(
-			listener,
-			sinker,
-		)
 
-		monitor := common.NewBootMonitor("MongoDB -> NATS feeder", forwarder, common.WithRefreshInterval(cfg.LockExpiry/2))
 		lockMonitors[i] = common.LockWorker{
-			Lock:   pool.NewLock("forwarder-lock", cfg.LockExpiry),
-			Worker: &monitor,
+			Lock: pool.NewLock("forwarder-lock", cfg.LockExpiry),
+			Worker: common.NewRunWorker("MongoDB -> NATS feeder", store.NewForwarder(
+				listener,
+				sinker,
+			)),
 		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	memberlist := common.NewRedisMemberlist(cfg.RedisAddresses[0], "forwarder-member", cfg.LockExpiry)
+	memberlist := common.NewRedisMemberlist(cfg.ConsulAddress, "forwarder-member", cfg.LockExpiry)
 	go common.BalanceWorkers(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
 
 	repo, err := mongodb.NewStore(dbURL, cfg.EsName)

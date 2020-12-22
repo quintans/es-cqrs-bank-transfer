@@ -1,6 +1,6 @@
 module github.com/quintans/es-cqrs-bank-transfer/account
 
-go 1.14
+go 1.15
 
 require (
 	github.com/caarlos0/env/v6 v6.3.0
