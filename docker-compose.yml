@@ -34,7 +34,7 @@ services:
       - NATS_ADDRESS=nats:4222
       - TOPIC=accounts
       - CONSUL_ADDRESS=localhost:8300
-      - PARTITION_SLOTS=1,2 # expect max 2 instances, one partition each
+      - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
     networks:
       - my-network
     ports:
@@ -55,8 +55,7 @@ services:
       - CONSUL_ADDRESS=consul:8500
       - ES_ADDRESS=svc-forwarder:3000
       - ELASTIC_ADDRESSES=http://localhost:9200
-      - PARTITIONS=2
-      - BALANCE_PARTITIONS=1,2 # expect max 2 instances, one partition each
+      - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
     networks:
       - my-network
     ports:

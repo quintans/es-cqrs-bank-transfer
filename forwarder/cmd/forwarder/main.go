@@ -56,12 +56,14 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	var partitionsNo uint32
-	for _, ps := range partitionSlots {
-		partitionsNo += ps.Size()
+	var partitions uint32
+	for _, v := range partitionSlots {
+		if v.To > partitions {
+			partitions = v.To
+		}
 	}
 
-	sinker := sink.NewNatsSink(cfg.ConfigNats.Topic, partitionsNo, "test-cluster", "pusher-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
+	sinker := sink.NewNatsSink(cfg.ConfigNats.Topic, partitions, "test-cluster", "pusher-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
 	defer sinker.Close()
 
 	dbURL := fmt.Sprintf("mongodb://%s:%s@%s:%d?connect=direct", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort)
@@ -70,10 +72,9 @@ func main() {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	size := len(partitionSlots)
-	lockMonitors := make([]common.LockWorker, size)
-	for i := 0; i < size; i++ {
-		listener, err := mongodb.NewFeed(dbURL, cfg.EsName)
+	lockMonitors := make([]common.LockWorker, len(partitionSlots))
+	for i, v := range partitionSlots {
+		listener, err := mongodb.NewFeed(dbURL, cfg.EsName, mongodb.WithPartitions(partitions, v.From, v.To))
 		if err != nil {
 			log.Fatalf("Error instantiating store listener: %v", err)
 		}

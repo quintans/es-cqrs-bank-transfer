@@ -28,10 +28,9 @@ const (
 )
 
 type Config struct {
-	ApiPort           int      `env:"API_PORT" envDefault:"8030"`
-	ElasticAddresses  []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
-	Partitions        int      `env:"PARTITIONS"`
-	BalancePartitions []string `env:"BALANCE_PARTITIONS" envSeparator:","`
+	ApiPort          int      `env:"API_PORT" envDefault:"8030"`
+	ElasticAddresses []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
+	PartitionSlots   []string `env:"PARTITION_SLOTS" envSeparator:","`
 	ConfigEs
 	ConfigRedis
 	ConfigNats
@@ -78,8 +77,7 @@ func Setup(cfg Config) {
 	// es player
 	esRepo := player.NewGrpcRepository(cfg.EsAddress)
 
-	// the clientID could be suffixed with low partition ID
-	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance-0", cfg.Topic, NotificationTopic)
+	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance", cfg.Topic, NotificationTopic)
 	if err != nil {
 		log.Fatalf("Error creating NATS subscriber: %s", err)
 	}
@@ -95,18 +93,22 @@ func Setup(cfg Config) {
 		balanceRebuild,
 		natsSub,
 	)
-	balanceUC := usecase.NewBalanceUsecase(repo, restarter, cfg.Partitions)
 
-	prjCtrl := controller.ProjectionBalance{
-		BalanceUsecase: balanceUC,
-	}
-
-	balancePartitions, err := common.ParseSlots(cfg.BalancePartitions)
+	balancePartitions, err := common.ParseSlots(cfg.PartitionSlots)
 	if err != nil {
 		log.Fatal(err)
 	}
-	if len(balancePartitions) != cfg.Partitions {
-		log.Fatal("Wrong size for Balance Partitions ranges. Expected %d, got %d", cfg.Partitions, len(balancePartitions))
+	var partitions uint32
+	for _, v := range balancePartitions {
+		if v.To > partitions {
+			partitions = v.To
+		}
+	}
+
+	balanceUC := usecase.NewBalanceUsecase(repo, restarter, int(partitions))
+
+	prjCtrl := controller.ProjectionBalance{
+		BalanceUsecase: balanceUC,
 	}
 
 	workers := make([]common.LockWorker, len(balancePartitions))
