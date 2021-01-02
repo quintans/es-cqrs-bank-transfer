@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -15,10 +16,10 @@ import (
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
-	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
 	"github.com/quintans/eventstore/subscriber"
+	"github.com/quintans/eventstore/worker"
 	"github.com/quintans/toolkit/locks"
 	log "github.com/sirupsen/logrus"
 )
@@ -88,13 +89,13 @@ func Setup(cfg Config) {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	balanceRebuild := pool.NewLock("balance-freeze", cfg.LockExpiry)
+	balanceRebuildLock := pool.NewLock("balance-freeze", cfg.LockExpiry)
 	restarter := projection.NewNotifierLockRestarter(
-		balanceRebuild,
+		balanceRebuildLock,
 		natsSub,
 	)
 
-	balancePartitions, err := common.ParseSlots(cfg.PartitionSlots)
+	balancePartitions, err := worker.ParseSlots(cfg.PartitionSlots)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -111,12 +112,12 @@ func Setup(cfg Config) {
 		BalanceUsecase: balanceUC,
 	}
 
-	workers := make([]common.LockWorker, len(balancePartitions))
+	workers := make([]worker.LockWorker, len(balancePartitions))
 	for i, v := range balancePartitions {
-		workers[i] = common.LockWorker{
-			Lock: pool.NewLock("balance-worker", cfg.LockExpiry),
-			Worker: common.NewRunWorker("Balance Projection", projection.NewProjectionPartition(
-				balanceRebuild,
+		workers[i] = worker.LockWorker{
+			Lock: pool.NewLock("balance-worker-"+strconv.Itoa(i), cfg.LockExpiry),
+			Worker: worker.NewRunWorker("Balance Projection", projection.NewProjectionPartition(
+				balanceRebuildLock,
 				prjCtrl,
 				natsSub,
 				projection.BootStage{
@@ -130,11 +131,11 @@ func Setup(cfg Config) {
 		}
 	}
 
-	memberlist, err := common.NewConsulMemberList(cfg.ConsulAddress, "balance-member", cfg.LockExpiry)
+	memberlist, err := worker.NewConsulMemberList(cfg.ConsulAddress, "balance-member", cfg.LockExpiry)
 	if err != nil {
 		log.Fatal(err)
 	}
-	go common.BalanceWorkers(ctx, memberlist, workers, cfg.LockExpiry/2)
+	go worker.BalanceWorkers(ctx, memberlist, workers, cfg.LockExpiry/2)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,

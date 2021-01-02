@@ -10,11 +10,11 @@ import (
 
 	"github.com/caarlos0/env/v6"
 	"github.com/nats-io/stan.go"
-	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/sink"
 	"github.com/quintans/eventstore/store"
 	"github.com/quintans/eventstore/store/mongodb"
+	"github.com/quintans/eventstore/worker"
 	"github.com/quintans/toolkit/locks"
 	log "github.com/sirupsen/logrus"
 )
@@ -52,7 +52,7 @@ func main() {
 		log.Fatal(err)
 	}
 
-	partitionSlots, err := common.ParseSlots(cfg.PartitionSlots)
+	partitionSlots, err := worker.ParseSlots(cfg.PartitionSlots)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -72,16 +72,16 @@ func main() {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	lockMonitors := make([]common.LockWorker, len(partitionSlots))
+	lockMonitors := make([]worker.LockWorker, len(partitionSlots))
 	for i, v := range partitionSlots {
 		listener, err := mongodb.NewFeed(dbURL, cfg.EsName, mongodb.WithPartitions(partitions, v.From, v.To))
 		if err != nil {
 			log.Fatalf("Error instantiating store listener: %v", err)
 		}
 
-		lockMonitors[i] = common.LockWorker{
+		lockMonitors[i] = worker.LockWorker{
 			Lock: pool.NewLock("forwarder-lock", cfg.LockExpiry),
-			Worker: common.NewRunWorker("MongoDB -> NATS feeder", store.NewForwarder(
+			Worker: worker.NewRunWorker("MongoDB -> NATS feeder", store.NewForwarder(
 				listener,
 				sinker,
 			)),
@@ -89,8 +89,8 @@ func main() {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	memberlist := common.NewRedisMemberlist(cfg.ConsulAddress, "forwarder-member", cfg.LockExpiry)
-	go common.BalanceWorkers(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
+	memberlist := worker.NewRedisMemberlist(cfg.ConsulAddress, "forwarder-member", cfg.LockExpiry)
+	go worker.BalanceWorkers(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
 
 	repo, err := mongodb.NewStore(dbURL, cfg.EsName)
 	if err != nil {
