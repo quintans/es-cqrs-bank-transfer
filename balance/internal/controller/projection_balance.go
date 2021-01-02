@@ -29,14 +29,12 @@ func (p ProjectionBalance) GetName() string {
 	return domain.ProjectionBalance
 }
 
-func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context) (map[string]string, error) {
+func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes []string, partition uint32) (string, error) {
 	lastEventID, err := p.BalanceUsecase.GetLastEventID(ctx)
 	if err != nil {
-		return nil, err
+		return "", err
 	}
-	return map[string]string{
-		event.AggregateType_Account: lastEventID,
-	}, nil
+	return lastEventID, nil
 }
 
 func (p ProjectionBalance) Handler(ctx context.Context, e eventstore.Event) error {

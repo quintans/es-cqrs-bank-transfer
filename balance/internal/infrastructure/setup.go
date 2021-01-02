@@ -120,6 +120,7 @@ func Setup(cfg Config) {
 				balanceRebuildLock,
 				prjCtrl,
 				natsSub,
+				partitions,
 				projection.BootStage{
 					AggregateTypes: []string{event.AggregateType_Account},
 					Subscriber:     natsSub,
