@@ -1,6 +1,10 @@
 package event
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/quintans/eventstore"
+)
 
 type Status string
 
@@ -54,8 +58,8 @@ func (_ OwnerUpdated) GetType() string {
 
 type EventFactory struct{}
 
-func (_ EventFactory) New(kind string) (interface{}, error) {
-	var e interface{}
+func (_ EventFactory) New(kind string) (eventstore.Typer, error) {
+	var e eventstore.Typer
 	switch kind {
 	case Event_AccountCreated:
 		e = &AccountCreated{}
