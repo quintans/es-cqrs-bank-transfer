@@ -3,25 +3,17 @@ package controller
 import (
 	"context"
 
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/eventstore"
-	log "github.com/sirupsen/logrus"
 )
 
 type ProjectionBalance struct {
-	BalanceUsecase domain.BalanceUsecase
-	factory        eventstore.Factory
-	codec          eventstore.Codec
-	upcaster       eventstore.Upcaster
+	balanceUsecase domain.BalanceUsecase
 }
 
-func NewProjectionBalance(balanceUsecase domain.BalanceUsecase, factory eventstore.Factory, codec eventstore.Codec, upcaster eventstore.Upcaster) ProjectionBalance {
+func NewProjectionBalance(balanceUsecase domain.BalanceUsecase) ProjectionBalance {
 	return ProjectionBalance{
-		BalanceUsecase: balanceUsecase,
-		factory:        factory,
-		codec:          codec,
-		upcaster:       upcaster,
+		balanceUsecase: balanceUsecase,
 	}
 }
 
@@ -30,7 +22,7 @@ func (p ProjectionBalance) GetName() string {
 }
 
 func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes []string, partition uint32) (string, error) {
-	lastEventID, err := p.BalanceUsecase.GetLastEventID(ctx)
+	lastEventID, err := p.balanceUsecase.GetLastEventID(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -38,31 +30,5 @@ func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes
 }
 
 func (p ProjectionBalance) Handler(ctx context.Context, e eventstore.Event) error {
-	logger := log.WithFields(log.Fields{
-		"projection": domain.ProjectionBalance,
-		"event":      e,
-	})
-	logger.Info("routing event")
-
-	m := domain.Metadata{
-		AggregateID: e.AggregateID,
-		EventID:     e.ID,
-	}
-
-	evt, err := eventstore.RehydrateEvent(p.factory, p.codec, p.upcaster, e.Kind, e.Body)
-	if err != nil {
-		return err
-	}
-
-	switch t := evt.(type) {
-	case event.AccountCreated:
-		err = p.BalanceUsecase.AccountCreated(ctx, m, t)
-	case event.MoneyDeposited:
-		err = p.BalanceUsecase.MoneyDeposited(ctx, m, t)
-	case event.MoneyWithdrawn:
-		err = p.BalanceUsecase.MoneyWithdrawn(ctx, m, t)
-	default:
-		logger.Warnf("Unknown event type: %s\n", e.Kind)
-	}
-	return err
+	return p.Handler(ctx, e)
 }

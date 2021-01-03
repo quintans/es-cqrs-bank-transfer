@@ -3,8 +3,8 @@ package domain
 import (
 	"context"
 
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
+	"github.com/quintans/eventstore"
 )
 
 type Metadata struct {
@@ -20,9 +20,7 @@ type LastIDs struct {
 
 type BalanceUsecase interface {
 	ListAll(ctx context.Context) ([]entity.Balance, error)
-	AccountCreated(ctx context.Context, metadata Metadata, e event.AccountCreated) error
-	MoneyDeposited(ctx context.Context, metadata Metadata, e event.MoneyDeposited) error
-	MoneyWithdrawn(ctx context.Context, metadata Metadata, e event.MoneyWithdrawn) error
+	Handler(ctx context.Context, e eventstore.Event) error
 	RebuildBalance(ctx context.Context) error
 	GetLastEventID(ctx context.Context) (string, error)
 }

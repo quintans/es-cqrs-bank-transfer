@@ -16,6 +16,7 @@ import (
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
+	"github.com/quintans/eventstore"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
 	"github.com/quintans/eventstore/subscriber"
@@ -106,11 +107,14 @@ func Setup(cfg Config) {
 		}
 	}
 
-	balanceUC := usecase.NewBalanceUsecase(repo, restarter, int(partitions))
+	balanceUC := usecase.NewBalanceUsecase(repo, restarter, int(partitions),
+		event.EventFactory{},
+		eventstore.JsonCodec{},
+		nil,
+		esRepo,
+	)
 
-	prjCtrl := controller.ProjectionBalance{
-		BalanceUsecase: balanceUC,
-	}
+	prjCtrl := controller.NewProjectionBalance(balanceUC)
 
 	workers := make([]worker.LockWorker, len(balancePartitions))
 	for i, v := range balancePartitions {

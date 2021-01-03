@@ -8,6 +8,7 @@ require (
 	github.com/labstack/echo/v4 v4.1.16
 	github.com/quintans/es-cqrs-bank-transfer/account/shared v0.0.0
 	github.com/quintans/eventstore v0.7.0
+	github.com/quintans/faults v1.0.0
 	github.com/quintans/toolkit v0.0.3
 	github.com/sirupsen/logrus v1.6.0
 )

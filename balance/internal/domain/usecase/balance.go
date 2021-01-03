@@ -8,7 +8,11 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
+	"github.com/quintans/eventstore"
+	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
+	"github.com/quintans/eventstore/store"
+	"github.com/quintans/faults"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 )
@@ -21,13 +25,29 @@ type BalanceUsecase struct {
 	balanceRepository domain.BalanceRepository
 	restarter         projection.Restarter
 	partitions        int
+	factory           eventstore.Factory
+	codec             eventstore.Codec
+	upcaster          eventstore.Upcaster
+	esRepo            player.Repository
 }
 
-func NewBalanceUsecase(balanceRepository domain.BalanceRepository, restarter projection.Restarter, partitions int) BalanceUsecase {
+func NewBalanceUsecase(
+	balanceRepository domain.BalanceRepository,
+	restarter projection.Restarter,
+	partitions int,
+	factory eventstore.Factory,
+	codec eventstore.Codec,
+	upcaster eventstore.Upcaster,
+	esRepo player.Repository,
+) BalanceUsecase {
 	return BalanceUsecase{
 		balanceRepository: balanceRepository,
 		restarter:         restarter,
 		partitions:        partitions,
+		factory:           factory,
+		codec:             codec,
+		upcaster:          upcaster,
+		esRepo:            esRepo,
 	}
 }
 
@@ -35,7 +55,37 @@ func (b BalanceUsecase) ListAll(ctx context.Context) ([]entity.Balance, error) {
 	return b.balanceRepository.GetAllOrderByOwnerAsc(ctx)
 }
 
-func (b BalanceUsecase) AccountCreated(ctx context.Context, m domain.Metadata, ac event.AccountCreated) error {
+func (b BalanceUsecase) Handler(ctx context.Context, e eventstore.Event) error {
+	logger := log.WithFields(log.Fields{
+		"projection": domain.ProjectionBalance,
+		"event":      e,
+	})
+	logger.Info("routing event")
+
+	m := domain.Metadata{
+		AggregateID: e.AggregateID,
+		EventID:     e.ID,
+	}
+
+	evt, err := eventstore.RehydrateEvent(b.factory, b.codec, b.upcaster, e.Kind, e.Body)
+	if err != nil {
+		return err
+	}
+
+	switch t := evt.(type) {
+	case event.AccountCreated:
+		err = b.accountCreated(ctx, m, t)
+	case event.MoneyDeposited:
+		err = b.moneyDeposited(ctx, m, t)
+	case event.MoneyWithdrawn:
+		err = b.moneyWithdrawn(ctx, m, t)
+	default:
+		logger.Warnf("Unknown event type: %s\n", e.Kind)
+	}
+	return err
+}
+
+func (b BalanceUsecase) accountCreated(ctx context.Context, m domain.Metadata, ac event.AccountCreated) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.AccountCreated",
 	})
@@ -56,7 +106,7 @@ func (b BalanceUsecase) AccountCreated(ctx context.Context, m domain.Metadata, a
 	return b.balanceRepository.CreateAccount(ctx, e)
 }
 
-func (b BalanceUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata, ac event.MoneyDeposited) error {
+func (b BalanceUsecase) moneyDeposited(ctx context.Context, m domain.Metadata, ac event.MoneyDeposited) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.MoneyDeposited",
 	})
@@ -77,7 +127,7 @@ func (b BalanceUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata, a
 	return b.balanceRepository.Update(ctx, update)
 }
 
-func (b BalanceUsecase) MoneyWithdrawn(ctx context.Context, m domain.Metadata, ac event.MoneyWithdrawn) error {
+func (b BalanceUsecase) moneyWithdrawn(ctx context.Context, m domain.Metadata, ac event.MoneyWithdrawn) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.MoneyWithdrawn",
 	})
@@ -119,8 +169,18 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 
 	return b.restarter.Restart(ctx, domain.ProjectionBalance, b.partitions, func(ctx context.Context) error {
 		logger.Info("Cleaning all balance data")
-		// TODO after cleaning all data, we could replay all events here, rather than wait for the boot process, that is slower.
-		return b.balanceRepository.ClearAllData(ctx)
+		err := b.balanceRepository.ClearAllData(ctx)
+		if err != nil {
+			return faults.Errorf("Unable to clean balance data: %w", err)
+		}
+
+		p := player.New(b.esRepo)
+		_, err = p.Replay(ctx, b.Handler, "", store.WithAggregateTypes(event.AggregateType_Account))
+		if err != nil {
+			return faults.Errorf("Unable to replay events after cleaning balance data: %w", err)
+		}
+
+		return nil
 	})
 
 }
