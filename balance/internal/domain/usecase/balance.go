@@ -119,6 +119,7 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 
 	return b.restarter.Restart(ctx, domain.ProjectionBalance, b.partitions, func(ctx context.Context) error {
 		logger.Info("Cleaning all balance data")
+		// TODO after cleaning all data, we could replay all events here, rather than wait for the boot process, that is slower.
 		return b.balanceRepository.ClearAllData(ctx)
 	})
 
