@@ -58,3 +58,12 @@ func (ctl Controller) Withdraw(c echo.Context) error {
 func (ctl Controller) Transfer(c echo.Context) error {
 	return errors.New("Not implemented")
 }
+
+func (ctl Controller) Balance(c echo.Context) error {
+	id := c.Param("id")
+	dto, err := ctl.accountUc.Balance(c.Request().Context(), id)
+	if err != nil {
+		return err
+	}
+	return c.JSON(http.StatusOK, dto)
+}

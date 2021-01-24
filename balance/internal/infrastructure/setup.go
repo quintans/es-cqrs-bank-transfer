@@ -116,11 +116,13 @@ func Setup(cfg Config) {
 
 	prjCtrl := controller.NewProjectionBalance(balanceUC)
 
-	workers := make([]worker.LockWorker, len(balancePartitions))
+	workers := make([]worker.Worker, len(balancePartitions))
 	for i, v := range balancePartitions {
-		workers[i] = worker.LockWorker{
-			Lock: pool.NewLock("balance-worker-"+strconv.Itoa(i), cfg.LockExpiry),
-			Worker: worker.NewRunWorker("Balance Projection", projection.NewProjectionPartition(
+		idx := strconv.Itoa(i)
+		workers[i] = worker.NewRunWorker(
+			"balance-projection-"+idx,
+			pool.NewLock("balance-lock-"+idx, cfg.LockExpiry),
+			projection.NewProjectionPartition(
 				balanceRebuildLock,
 				prjCtrl,
 				natsSub,
@@ -132,8 +134,7 @@ func Setup(cfg Config) {
 					PartitionLo:    v.From,
 					PartitionHi:    v.To,
 				},
-			)),
-		}
+			))
 	}
 
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulAddress, "balance-member", cfg.LockExpiry)

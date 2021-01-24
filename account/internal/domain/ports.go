@@ -25,9 +25,16 @@ type TransferCommand struct {
 	Money int64  `json:"money"`
 }
 
+type AccountDTO struct {
+	Status  string `json:"status,omitempty"`
+	Balance int64  `json:"balance,omitempty"`
+	Owner   string `json:"owner,omitempty"`
+}
+
 type AccountUsecaser interface {
 	Create(ctx context.Context, cmd CreateCommand) (string, error)
 	Deposit(ctx context.Context, cmd DepositCommand) error
 	Withdraw(ctx context.Context, cmd WithdrawCommand) error
 	Transfer(ctx context.Context, cmd TransferCommand) error
+	Balance(ctx context.Context, id string) (AccountDTO, error)
 }

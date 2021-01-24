@@ -76,3 +76,16 @@ func (uc AccountUsecase) Withdraw(ctx context.Context, cmd domain.WithdrawComman
 func (uc AccountUsecase) Transfer(ctx context.Context, cmd domain.TransferCommand) error {
 	return errors.New("Not implemented")
 }
+
+func (uc AccountUsecase) Balance(ctx context.Context, id string) (domain.AccountDTO, error) {
+	agg, err := uc.es.GetByID(ctx, id)
+	if err != nil {
+		return domain.AccountDTO{}, err
+	}
+	acc := agg.(*entity.Account)
+	return domain.AccountDTO{
+		Owner:   acc.Owner,
+		Balance: acc.Balance,
+		Status:  string(acc.Status),
+	}, nil
+}

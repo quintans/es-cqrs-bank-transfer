@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/caarlos0/env/v6"
 	"github.com/nats-io/stan.go"
-	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/sink"
 	"github.com/quintans/eventstore/store"
 	"github.com/quintans/eventstore/store/mongodb"
@@ -21,8 +21,7 @@ import (
 
 type Config struct {
 	ConsulAddress  string        `env:"CONSUL_ADDRESS"`
-	LockExpiry     time.Duration `env:"LOCK_EXPIRY" envDefault:"2s"`
-	GrpcAddress    string        `env:"ES_ADDRESS" envDefault:":3000"`
+	LockExpiry     time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
 	PartitionSlots []string      `env:"PARTITION_SLOTS" envSeparator:","`
 	ConfigEs
 	ConfigNats
@@ -43,6 +42,9 @@ type ConfigNats struct {
 
 func init() {
 	log.SetOutput(os.Stdout)
+	log.SetFormatter(&log.TextFormatter{
+		DisableQuote: true,
+	})
 }
 
 func main() {
@@ -63,40 +65,47 @@ func main() {
 		}
 	}
 
-	sinker := sink.NewNatsSink(cfg.ConfigNats.Topic, partitions, "test-cluster", "pusher-id", stan.NatsURL(cfg.ConfigNats.NatsAddress))
-	defer sinker.Close()
+	slotLen := len(partitionSlots)
+	sinkers := make([]*sink.NatsSink, slotLen)
+	for i := 0; i < slotLen; i++ {
+		idx := strconv.Itoa(i)
+		sinkers[i] = sink.NewNatsSink(cfg.ConfigNats.Topic, partitions, "test-cluster", "pusher-id-"+idx, stan.NatsURL(cfg.ConfigNats.NatsAddress))
+	}
+	defer func() {
+		for _, s := range sinkers {
+			s.Close()
+		}
+	}()
 
-	dbURL := fmt.Sprintf("mongodb://%s:%s@%s:%d?connect=direct", cfg.EsUser, cfg.EsPassword, cfg.EsHost, cfg.EsPort)
+	dbURL := fmt.Sprintf("mongodb://%s:%d/%s?replicaSet=rs0", cfg.EsHost, cfg.EsPort, cfg.EsName)
 	pool, err := locks.NewConsulLockPool(cfg.ConsulAddress)
 	if err != nil {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	lockMonitors := make([]worker.LockWorker, len(partitionSlots))
+	workers := make([]worker.Worker, slotLen)
 	for i, v := range partitionSlots {
 		listener, err := mongodb.NewFeed(dbURL, cfg.EsName, mongodb.WithPartitions(partitions, v.From, v.To))
 		if err != nil {
 			log.Fatalf("Error instantiating store listener: %v", err)
 		}
 
-		lockMonitors[i] = worker.LockWorker{
-			Lock: pool.NewLock("forwarder-lock", cfg.LockExpiry),
-			Worker: worker.NewRunWorker("MongoDB -> NATS feeder", store.NewForwarder(
+		idx := strconv.Itoa(i)
+		workers[i] = worker.NewRunWorker(
+			"mongodb-NATS-feeder-"+idx,
+			pool.NewLock("forwarder-lock-"+idx, cfg.LockExpiry),
+			store.NewForwarder(
 				listener,
-				sinker,
-			)),
-		}
+				sinkers[i],
+			))
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	memberlist := worker.NewRedisMemberlist(cfg.ConsulAddress, "forwarder-member", cfg.LockExpiry)
-	go worker.BalanceWorkers(ctx, memberlist, lockMonitors, cfg.LockExpiry/2)
-
-	repo, err := mongodb.NewStore(dbURL, cfg.EsName)
+	memberlist, err := worker.NewConsulMemberList(cfg.ConsulAddress, "forwarder-member", cfg.LockExpiry)
 	if err != nil {
-		log.Fatalf("Error instantiating event store: %v", err)
+		log.Fatal(err)
 	}
-	go player.StartGrpcServer(ctx, cfg.GrpcAddress, repo)
+	go worker.BalanceWorkers(ctx, memberlist, workers, cfg.LockExpiry/2)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)

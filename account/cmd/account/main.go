@@ -10,6 +10,9 @@ import (
 
 func init() {
 	log.SetOutput(os.Stdout)
+	log.SetFormatter(&log.TextFormatter{
+		DisableQuote: true,
+	})
 }
 
 func main() {

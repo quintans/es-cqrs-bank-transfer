@@ -7,8 +7,7 @@ require (
 	github.com/nats-io/stan.go v0.7.0
 	github.com/quintans/eventstore v0.7.0
 	github.com/quintans/toolkit v0.0.3
-	github.com/sirupsen/logrus v1.4.2
-
+	github.com/sirupsen/logrus v1.7.0
 )
 
 replace github.com/quintans/es-cqrs-bank-transfer/account/shared => ../account/shared

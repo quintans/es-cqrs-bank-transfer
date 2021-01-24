@@ -9,7 +9,8 @@ require (
 	github.com/labstack/echo/v4 v4.1.16
 	github.com/quintans/es-cqrs-bank-transfer/account/shared v0.0.0-00010101000000-000000000000
 	github.com/quintans/eventstore v0.7.0
-	github.com/sirupsen/logrus v1.4.2
+	github.com/quintans/faults v1.0.0
+	github.com/sirupsen/logrus v1.7.0
 	go.mongodb.org/mongo-driver v1.1.0
 )
 

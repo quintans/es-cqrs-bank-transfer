@@ -5,61 +5,60 @@ networks:
     driver: bridge
 
 services:
-  svc-account:
-    build: 
-      context: ./account
-      # dockerfile: ./Dockerfile
-    depends_on:
-      - mongo
-    environment:
-      - ES_HOST=mongo
-      - ES_NAME=accounts
-      - API_PORT=8000
-    networks:
-      - my-network
-    ports:
-      - 8000:8000
+  # svc-account:
+  #   build: 
+  #     context: ./account
+  #     # dockerfile: ./Dockerfile
+  #   depends_on:
+  #     - mongo
+  #   environment:
+  #     - ES_HOST=mongo
+  #     - ES_NAME=accounts
+  #     - API_PORT=8000
+  #   networks:
+  #     - my-network
+  #   ports:
+  #     - 8000:8000
+  #     - 3000:3000
 
-  svc-forwarder:
-    build: 
-      context: ./forwarder
-      # dockerfile: ./Dockerfile
-    depends_on:
-      - mongo
-      - nats
-      - consul
-    environment:
-      - ES_HOST=mongo
-      - ES_NAME=accounts
-      - NATS_ADDRESS=nats:4222
-      - TOPIC=accounts
-      - CONSUL_ADDRESS=localhost:8500
-      - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
-    networks:
-      - my-network
-    ports:
-      - 3000:3000
+  # svc-forwarder:
+  #   build: 
+  #     context: ./forwarder
+  #     # dockerfile: ./Dockerfile
+  #   depends_on:
+  #     - mongo
+  #     - nats
+  #     - consul
+  #   environment:
+  #     - ES_HOST=mongo
+  #     - ES_NAME=accounts
+  #     - NATS_ADDRESS=nats:4222
+  #     - TOPIC=accounts
+  #     - CONSUL_ADDRESS=consul:8500
+  #     - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
+  #   networks:
+  #     - my-network
 
-  svc-balance:
-    build: 
-      context: ./balance
-      # dockerfile: ./Dockerfile
-    depends_on:
-      - nats
-      - elastic
-      - consul
-      - svc-forwarder
-    environment:
-      - NATS_ADDRESS=nats:4222
-      - TOPIC=accounts
-      - CONSUL_ADDRESS=consul:8500
-      - ES_ADDRESS=svc-forwarder:3000
-      - ELASTIC_ADDRESSES=http://localhost:9200
-      - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
-    networks:
-      - my-network
-    ports:
-      - 8030:8030
+  # svc-balance:
+  #   build: 
+  #     context: ./balance
+  #     # dockerfile: ./Dockerfile
+  #   depends_on:
+  #     - nats
+  #     - elastic
+  #     - consul
+  #     - svc-forwarder
+  #   environment:
+  #     - NATS_ADDRESS=nats:4222
+  #     - TOPIC=accounts
+  #     - CONSUL_ADDRESS=consul:8500
+  #     - ES_ADDRESS=svc-forwarder:3000
+  #     - ELASTIC_ADDRESSES=http://elastic:9200
+  #     - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
+  #   networks:
+  #     - my-network
+  #   ports:
+  #     - 8030:8030
 
   # database:
   #   image: postgres:12.3-alpine
@@ -129,43 +128,51 @@ services:
     networks:
       - my-network
 
-  # https://medium.com/@renato.groffe/mongodb-mongo-express-docker-compose-montando-rapidamente-um-ambiente-para-uso-824f25ca6957
-  mongo:
+  M1:
+    hostname: M1
+    container_name: M1
     image: mongo:latest
     environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: password
-      # MONGO_REPLICA_SET_NAME: rs0
+      # MONGO_INITDB_ROOT_USERNAME: root
+      # MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: account
+      MONGO_REPLICA_SET_NAME: rs0
+    expose:
+      - 27017
     ports:
       - 27017:27017
-    volumes:
-      - mongodb_data:/data/db
-    networks:
-      - my-network
-    # command: ["--replSet", "rs0", "--bind_ip_all"]
-    # healthcheck:
-    #   test: test $$(echo "rs.initiate().ok || rs.status().ok" | mongo -u root -p password --quiet) -eq 1
-    #   interval: 10s
-    #   start_period: 30s
+    restart: always
+    entrypoint: [ "/usr/bin/mongod", "--bind_ip_all", "--replSet", "rs0" ]
 
-  mongo-express:
-    image: mongo-express
-    ports:
-      - 8081:8081
-    environment:
-      ME_CONFIG_BASICAUTH_USERNAME: root
-      ME_CONFIG_BASICAUTH_PASSWORD: password
-      ME_CONFIG_MONGODB_PORT: 27017
-      ME_CONFIG_MONGODB_ADMINUSERNAME: root
-      ME_CONFIG_MONGODB_ADMINPASSWORD: password
-    depends_on:
-      - mongo
+  mongo:
+    image: mongo:latest
     links:
-      - mongo
-    networks:
-      - my-network
+      - M1:M1
+    depends_on:
+      - M1
+    volumes:
+      - ./e2e/scripts:/scripts
+    restart: "no"
+    entrypoint: [ "bash", "/scripts/mongo_setup.sh" ]
+
+  # mongo-express:
+  #   image: mongo-express
+  #   ports:
+  #     - 8081:8081
+  #   environment:
+  #     ME_CONFIG_BASICAUTH_USERNAME: root
+  #     ME_CONFIG_BASICAUTH_PASSWORD: password
+  #     # ME_CONFIG_MONGODB_PORT: 27017
+  #     # # ME_CONFIG_MONGODB_ADMINUSERNAME: root
+  #     # # ME_CONFIG_MONGODB_ADMINPASSWORD: password
+  #     ME_CONFIG_MONGODB_SERVER: "M1"
+  #   depends_on:
+  #     - mongo
+  #   links:
+  #     - mongo
+  #   networks:
+  #     - my-network
 
 volumes:
-  mongodb_data:
   data01:
     driver: local
