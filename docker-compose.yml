@@ -1,83 +1,68 @@
-version: '3'
+version: '3.4'
 
 networks:
   my-network:
     driver: bridge
 
 services:
-  svc-account:
-    build: 
-      context: ./account
-      # dockerfile: ./Dockerfile
-    depends_on:
-      - database
-    environment:
-      - ES_HOST=database
-      - ES_NAME=accounts
-      - API_PORT=8000
-    networks:
-      - my-network
-    ports:
-      - 8000:8000
+  # svc-account:
+  #   build: 
+  #     context: ./account
+  #     # dockerfile: ./Dockerfile
+  #   depends_on:
+  #     - mongo
+  #   environment:
+  #     - ES_HOST=mongo
+  #     - ES_NAME=accounts
+  #     - API_PORT=8000
+  #     - NATS_ADDRESS=nats:4222
+  #     - TOPIC=accounts
+  #     - CONSUL_ADDRESS=consul:8500
+  #     - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
+  #   networks:
+  #     - my-network
+  #   ports:
+  #     - 8000:8000
+  #     - 3000:3000
 
-  svc-pusher:
-    build: 
-      context: ./pusher
-      # dockerfile: ./Dockerfile
-    depends_on:
-      - database
-      - nats
-      - redis
-    environment:
-      - ES_HOST=database
-      - ES_NAME=accounts
-      - NATS_ADDRESS=nats:4222
-      - TOPIC=accounts
-      - REDIS_ADDRESSES=localhost:6379
-    networks:
-      - my-network
-    ports:
-      - 3000:3000
+  # svc-balance:
+  #   build: 
+  #     context: ./balance
+  #     # dockerfile: ./Dockerfile
+  #   depends_on:
+  #     - nats
+  #     - elastic
+  #     - consul
+  #     - svc-forwarder
+  #   environment:
+  #     - NATS_ADDRESS=nats:4222
+  #     - TOPIC=accounts
+  #     - CONSUL_ADDRESS=consul:8500
+  #     - ES_ADDRESS=svc-forwarder:3000
+  #     - ELASTIC_ADDRESSES=http://elastic:9200
+  #     - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
+  #   networks:
+  #     - my-network
+  #   ports:
+  #     - 8030:8030
 
-  svc-balance:
-    build: 
-      context: ./balance
-      # dockerfile: ./Dockerfile
-    depends_on:
-      - nats
-      - elastic
-      - redis
-      - svc-pusher
-    environment:
-      - NATS_ADDRESS=nats:4222
-      - TOPIC=accounts
-      - REDIS_ADDRESSES=redis:6379
-      - ES_ADDRESS=svc-pusher:3000
-      - ELASTIC_ADDRESSES=http://localhost:9200
-      - REDIS_ADDRESSES=localhost:6379
-    networks:
-      - my-network
-    ports:
-      - 8030:8030
-
-  database:
-    image: postgres:12.3-alpine
-    healthcheck:
-      test: [ "CMD", "pg_isready", "-q", "-d", "postgres", "-U", "root" ]
-      timeout: 45s
-      interval: 10s
-      retries: 10
-    restart: always
-    environment:
-      - POSTGRES_USER=root
-      - POSTGRES_PASSWORD=password
-      - POSTGRES_DB=accounts
-    volumes:
-      - ./scripts/db:/docker-entrypoint-initdb.d/
-    networks:
-      - my-network
-    ports:
-      - 5432:5432
+  # database:
+  #   image: postgres:12.3-alpine
+  #   healthcheck:
+  #     test: [ "CMD", "pg_isready", "-q", "-d", "postgres", "-U", "root" ]
+  #     timeout: 45s
+  #     interval: 10s
+  #     retries: 10
+  #   environment:
+  #     - POSTGRES_USER=root
+  #     - POSTGRES_PASSWORD=password
+  #     - POSTGRES_DB=accounts
+  #   volumes:
+  #     - ./scripts/db:/docker-entrypoint-initdb.d/
+  #   networks:
+  #     - my-network
+  #   ports:
+  #     - 5432:5432
 
   nats:
     image: nats-streaming
@@ -110,44 +95,70 @@ services:
     networks:
       - my-network
 
-  redis:
-    image: "redis:alpine"
+  # redis:
+  #   image: "redis:alpine"
+  #   ports:
+  #     - "6379:6379"
+  #   networks:
+  #     - my-network
+
+  consul:
+    image: bitnami/consul:latest
     ports:
-      - "6379:6379"
+      - '8300:8300'
+      - '8301:8301'
+      - '8301:8301/udp'
+      - '8500:8500'
+      - '8600:8600'
+      - '8600:8600/udp'
     networks:
       - my-network
 
-  # https://medium.com/@renato.groffe/mongodb-mongo-express-docker-compose-montando-rapidamente-um-ambiente-para-uso-824f25ca6957
-  mongodb:
+  M1:
+    hostname: M1
+    container_name: M1
     image: mongo:latest
     environment:
-      MONGO_INITDB_ROOT_USERNAME: root
-      MONGO_INITDB_ROOT_PASSWORD: password
+      # MONGO_INITDB_ROOT_USERNAME: root
+      # MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: account
+      MONGO_REPLICA_SET_NAME: rs0
+    expose:
+      - 27017
     ports:
       - 27017:27017
-    volumes:
-      - mongodb_data:/data/db
-    networks:
-      - my-network
+    restart: always
+    entrypoint: [ "/usr/bin/mongod", "--bind_ip_all", "--replSet", "rs0" ]
 
-  mongo-express:
-    image: mongo-express
-    ports:
-      - 8081:8081
-    environment:
-      ME_CONFIG_BASICAUTH_USERNAME: root
-      ME_CONFIG_BASICAUTH_PASSWORD: password
-      ME_CONFIG_MONGODB_PORT: 27017
-      ME_CONFIG_MONGODB_ADMINUSERNAME: root
-      ME_CONFIG_MONGODB_ADMINPASSWORD: password
-    depends_on:
-      - mongodb
+  mongo:
+    image: mongo:latest
     links:
-      - mongodb
-    networks:
-      - my-network
+      - M1:M1
+    depends_on:
+      - M1
+    volumes:
+      - ./e2e/scripts:/scripts
+    restart: "no"
+    entrypoint: [ "bash", "/scripts/mongo_setup.sh" ]
+
+  # mongo-express:
+  #   image: mongo-express
+  #   ports:
+  #     - 8081:8081
+  #   environment:
+  #     ME_CONFIG_BASICAUTH_USERNAME: root
+  #     ME_CONFIG_BASICAUTH_PASSWORD: password
+  #     # ME_CONFIG_MONGODB_PORT: 27017
+  #     # # ME_CONFIG_MONGODB_ADMINUSERNAME: root
+  #     # # ME_CONFIG_MONGODB_ADMINPASSWORD: password
+  #     ME_CONFIG_MONGODB_SERVER: "M1"
+  #   depends_on:
+  #     - mongo
+  #   links:
+  #     - mongo
+  #   networks:
+  #     - my-network
 
 volumes:
-  mongodb_data:
   data01:
     driver: local

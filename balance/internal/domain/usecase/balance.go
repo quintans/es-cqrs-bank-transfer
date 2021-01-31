@@ -8,7 +8,12 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
+	"github.com/quintans/eventstore"
+	"github.com/quintans/eventstore/common"
+	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
+	"github.com/quintans/eventstore/store"
+	"github.com/quintans/faults"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 )
@@ -18,15 +23,72 @@ var (
 )
 
 type BalanceUsecase struct {
-	BalanceRepository domain.BalanceRepository
-	Notifier          projection.Notifier
+	balanceRepository domain.BalanceRepository
+	restarter         projection.Restarter
+	partitions        uint32
+	factory           eventstore.Factory
+	codec             eventstore.Codec
+	upcaster          eventstore.Upcaster
+	esRepo            player.Repository
+}
+
+func NewBalanceUsecase(
+	balanceRepository domain.BalanceRepository,
+	restarter projection.Restarter,
+	partitions uint32,
+	factory eventstore.Factory,
+	codec eventstore.Codec,
+	upcaster eventstore.Upcaster,
+	esRepo player.Repository,
+) BalanceUsecase {
+	return BalanceUsecase{
+		balanceRepository: balanceRepository,
+		restarter:         restarter,
+		partitions:        partitions,
+		factory:           factory,
+		codec:             codec,
+		upcaster:          upcaster,
+		esRepo:            esRepo,
+	}
 }
 
 func (b BalanceUsecase) ListAll(ctx context.Context) ([]entity.Balance, error) {
-	return b.BalanceRepository.GetAllOrderByOwnerAsc(ctx)
+	return b.balanceRepository.GetAllOrderByOwnerAsc(ctx)
 }
 
-func (b BalanceUsecase) AccountCreated(ctx context.Context, m domain.Metadata, ac event.AccountCreated) error {
+func (b BalanceUsecase) Handler(ctx context.Context, e eventstore.Event) error {
+	logger := log.WithFields(log.Fields{
+		"projection": domain.ProjectionBalance,
+		"event":      e,
+	})
+
+	p := common.WhichPartition(e.AggregateIDHash, uint32(b.partitions))
+
+	m := domain.Metadata{
+		AggregateID: e.AggregateID,
+		EventID:     e.ID,
+		Partition:   p,
+	}
+
+	evt, err := eventstore.RehydrateEvent(b.factory, b.codec, b.upcaster, e.Kind, e.Body)
+	if err != nil {
+		return err
+	}
+
+	switch t := evt.(type) {
+	case event.AccountCreated:
+		err = b.accountCreated(ctx, m, t)
+	case event.MoneyDeposited:
+		err = b.moneyDeposited(ctx, m, t)
+	case event.MoneyWithdrawn:
+		err = b.moneyWithdrawn(ctx, m, t)
+	default:
+		logger.Warnf("Unknown event type: %s\n", e.Kind)
+	}
+	return err
+}
+
+func (b BalanceUsecase) accountCreated(ctx context.Context, m domain.Metadata, ac event.AccountCreated) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.AccountCreated",
 	})
@@ -37,17 +99,18 @@ func (b BalanceUsecase) AccountCreated(ctx context.Context, m domain.Metadata, a
 	}
 
 	e := entity.Balance{
-		ID:      ac.ID,
-		EventID: m.EventID,
-		Owner:   ac.Owner,
-		Status:  event.OPEN,
-		Balance: ac.Money,
+		ID:        ac.ID,
+		EventID:   m.EventID,
+		Partition: m.Partition,
+		Owner:     ac.Owner,
+		Status:    event.OPEN,
+		Balance:   ac.Money,
 	}
 	logger.Infof("Creating account: ID: %s, Owner: %s, Balance: %d", ac.ID, ac.Owner, ac.Money)
-	return b.BalanceRepository.CreateAccount(ctx, e)
+	return b.balanceRepository.CreateAccount(ctx, e)
 }
 
-func (b BalanceUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata, ac event.MoneyDeposited) error {
+func (b BalanceUsecase) moneyDeposited(ctx context.Context, m domain.Metadata, ac event.MoneyDeposited) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.MoneyDeposited",
 	})
@@ -55,20 +118,21 @@ func (b BalanceUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata, a
 	if err != nil || ignore {
 		return err
 	}
-	agg, err := b.BalanceRepository.GetByID(ctx, m.AggregateID)
+	agg, err := b.balanceRepository.GetByID(ctx, m.AggregateID)
 	if agg.IsZero() {
 		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
 	update := entity.Balance{
-		ID:      agg.ID,
-		Version: agg.Version,
-		EventID: m.EventID,
-		Balance: agg.Balance + ac.Money,
+		ID:        agg.ID,
+		Version:   agg.Version,
+		EventID:   m.EventID,
+		Partition: m.Partition,
+		Balance:   agg.Balance + ac.Money,
 	}
-	return b.BalanceRepository.Update(ctx, update)
+	return b.balanceRepository.Update(ctx, update)
 }
 
-func (b BalanceUsecase) MoneyWithdrawn(ctx context.Context, m domain.Metadata, ac event.MoneyWithdrawn) error {
+func (b BalanceUsecase) moneyWithdrawn(ctx context.Context, m domain.Metadata, ac event.MoneyWithdrawn) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.MoneyWithdrawn",
 	})
@@ -76,21 +140,22 @@ func (b BalanceUsecase) MoneyWithdrawn(ctx context.Context, m domain.Metadata, a
 	if err != nil || ignore {
 		return err
 	}
-	agg, err := b.BalanceRepository.GetByID(ctx, m.AggregateID)
+	agg, err := b.balanceRepository.GetByID(ctx, m.AggregateID)
 	if agg.IsZero() {
 		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
 	update := entity.Balance{
-		ID:      agg.ID,
-		Version: agg.Version,
-		EventID: m.EventID,
-		Balance: agg.Balance - ac.Money,
+		ID:        agg.ID,
+		Version:   agg.Version,
+		EventID:   m.EventID,
+		Partition: m.Partition,
+		Balance:   agg.Balance - ac.Money,
 	}
-	return b.BalanceRepository.Update(ctx, update)
+	return b.balanceRepository.Update(ctx, update)
 }
 
 func (b BalanceUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry, m domain.Metadata) (bool, error) {
-	lastEventID, err := b.BalanceRepository.GetEventID(ctx, m.AggregateID)
+	lastEventID, err := b.balanceRepository.GetEventID(ctx, m.AggregateID)
 	if err != nil {
 		return false, err
 	}
@@ -107,26 +172,28 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.RebuildBalance",
 	})
-	logger.Info("Signalling to STOP the balance projection listener")
-	err := b.Notifier.FreezeProjection(ctx, domain.ProjectionBalance)
-	if err != nil {
-		log.WithError(err).Errorf("Error while freezing projection %s", domain.ProjectionBalance)
-		return err
-	}
 
-	logger.Info("Cleaning all balance data")
-	err = b.BalanceRepository.ClearAllData(ctx)
-	if err != nil {
-		return err
-	}
+	return b.restarter.Restart(ctx, domain.ProjectionBalance, int(b.partitions), func(ctx context.Context) error {
+		logger.Info("Cleaning all balance data")
+		err := b.balanceRepository.ClearAllData(ctx)
+		if err != nil {
+			return faults.Errorf("Unable to clean balance data: %w", err)
+		}
 
-	logger.Info("Signalling to START the balance projection listener")
-	return b.Notifier.UnfreezeProjection(ctx, domain.ProjectionBalance)
+		p := player.New(b.esRepo)
+		_, err = p.Replay(ctx, b.Handler, "", store.WithAggregateTypes(event.AggregateType_Account))
+		if err != nil {
+			return faults.Errorf("Unable to replay events after cleaning balance data: %w", err)
+		}
+
+		return nil
+	})
+
 }
 
-func (b BalanceUsecase) GetLastEventID(ctx context.Context) (string, error) {
+func (b BalanceUsecase) GetLastEventID(ctx context.Context, partition int) (string, error) {
 	// get the latest event ID from the eventstore
-	eventID, err := b.BalanceRepository.GetMaxEventID(ctx)
+	eventID, err := b.balanceRepository.GetMaxEventID(ctx, partition)
 	if err != nil {
 		return "", fmt.Errorf("Could not get last event ID: %w", err)
 	}

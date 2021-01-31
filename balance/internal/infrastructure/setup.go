@@ -15,10 +15,11 @@ import (
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
-	"github.com/quintans/eventstore/common"
+	"github.com/quintans/eventstore"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
 	"github.com/quintans/eventstore/subscriber"
+	"github.com/quintans/eventstore/worker"
 	"github.com/quintans/toolkit/locks"
 	log "github.com/sirupsen/logrus"
 )
@@ -30,6 +31,7 @@ const (
 type Config struct {
 	ApiPort          int      `env:"API_PORT" envDefault:"8030"`
 	ElasticAddresses []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
+	PartitionSlots   []string `env:"PARTITION_SLOTS" envSeparator:","`
 	ConfigEs
 	ConfigRedis
 	ConfigNats
@@ -41,8 +43,8 @@ type ConfigEs struct {
 }
 
 type ConfigRedis struct {
-	RedisAddresses []string      `env:"REDIS_ADDRESSES" envSeparator:","`
-	LockExpiry     time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
+	ConsulAddress string        `env:"CONSUL_ADDRESS"`
+	LockExpiry    time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
 }
 
 type ConfigNats struct {
@@ -76,37 +78,69 @@ func Setup(cfg Config) {
 	// es player
 	esRepo := player.NewGrpcRepository(cfg.EsAddress)
 
-	// the clientID could be suffixed with low partition ID
-	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance-0", cfg.Topic, NotificationTopic)
+	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance", cfg.Topic, NotificationTopic)
 	if err != nil {
 		log.Fatalf("Error creating NATS subscriber: %s", err)
 	}
 
-	balanceUC := usecase.BalanceUsecase{
-		BalanceRepository: repo,
-		Notifier:          natsSub,
-	}
-
-	prjCtrl := controller.ProjectionBalance{
-		BalanceUsecase: balanceUC,
-	}
-	manager := projection.NewBootableManager(
-		prjCtrl,
-		natsSub,
-		projection.BootStages{
-			AggregateTypes: []string{event.AggregateType_Account},
-			Subscriber:     natsSub,
-			Repository:     esRepo,
-			// no partitioning range, meaning we will not use partitioned topic
-		},
-	)
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
-	locker, err := locks.NewRedisLock(cfg.RedisAddresses, "balance", cfg.LockExpiry)
+	pool, err := locks.NewConsulLockPool(cfg.ConsulAddress)
 	if err != nil {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
-	monitor := common.NewBootMonitor("Balance Projection", manager, common.WithLock(locker), common.WithRefreshInterval(cfg.LockExpiry/2))
-	go monitor.Start(ctx)
+
+	restarterLock := pool.NewLock("balance-freeze", cfg.LockExpiry)
+	restarter := projection.NewNotifierLockRestarter(
+		restarterLock,
+		natsSub,
+	)
+
+	balancePartitions, err := worker.ParseSlots(cfg.PartitionSlots)
+	if err != nil {
+		log.Fatal(err)
+	}
+	var partitions uint32
+	for _, v := range balancePartitions {
+		if v.To > partitions {
+			partitions = v.To
+		}
+	}
+
+	balanceUC := usecase.NewBalanceUsecase(repo, restarter, partitions,
+		event.EventFactory{},
+		eventstore.JSONCodec{},
+		nil,
+		esRepo,
+	)
+
+	prjCtrl := controller.NewProjectionBalance(balanceUC)
+
+	workers := make([]worker.Worker, len(balancePartitions))
+	for i, v := range balancePartitions {
+		slots := fmt.Sprintf("%d-%d", v.From, v.To)
+		workers[i] = worker.NewRunWorker(
+			"balance-projection-"+slots,
+			pool.NewLock("balance-lock-"+slots, cfg.LockExpiry),
+			projection.NewProjectionPartition(
+				restarterLock,
+				prjCtrl,
+				natsSub,
+				partitions,
+				projection.BootStage{
+					AggregateTypes: []string{event.AggregateType_Account},
+					Subscriber:     natsSub,
+					Repository:     esRepo,
+					PartitionLo:    v.From,
+					PartitionHi:    v.To,
+				},
+			))
+	}
+
+	memberlist, err := worker.NewConsulMemberList(cfg.ConsulAddress, "balance-member", cfg.LockExpiry)
+	if err != nil {
+		log.Fatal(err)
+	}
+	go worker.BalanceWorkers(ctx, memberlist, workers, cfg.LockExpiry/2)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,

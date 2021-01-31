@@ -1,0 +1,20 @@
+[
+    {
+        "dropIndexes": "events",
+        "index": "unique_aggregate_version"
+    },
+    {
+        "dropIndexes": "events",
+        "index": "idx_idempotency_aggregate"
+    },
+    {
+        "dropIndexes": "snapshots",
+        "index": "idx_aggregate"
+    },
+    {
+        "drop": "snapshots"
+    },
+    {
+        "drop": "events"
+    }
+]

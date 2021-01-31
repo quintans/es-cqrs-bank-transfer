@@ -3,12 +3,13 @@ PoC for CQRS and Event Sourcing
 
 This project is a way to play around with event sourcing and CQRS.
 Here I followed the more complex path, where I tried to have an architecture to handle a high throughput.
+This is achieved by partitioning events and having workers handling them. These workers are then balanced over the service replicas.
 
 This project has several moving pieces
-* PostgreSQL: the event store database
+* MongoDB: the event store database
 * Account Service: the write side of things. This writes into the event store.
-* Poller Service: periodically pools (less 1s) the event store for new events and publish them into a MQ. Only one instance will be running at a given time.
-* Balance Service: reads the MQ and updates its projection(s). The projections listeners will only be active in one of the instances. To guarantee that, we use distributed locking.
+* Forwarder Service: Listens the event store for new events and publish them into a MQ. Publishing is partitioned over several topics with the same prefix. eg: `balance.2`.
+* Balance Service: reads the MQ and updates its projection(s). Several listeners are created according to number of partitions.
 * NATS: the message queue
 * Elasticsearch: the projection database
 * Redis: for distributed locking.
@@ -23,7 +24,7 @@ docker-compose up --build
 > The elasticsearch commands can also be run in http://localhost:5601/app/kibana#/dev_tools/console
 
 
-before run  the examples bellow we need to create an index in elasticsearch.
+before run the examples bellow we need to create an index in elasticsearch.
 ```sh
 curl -XPUT "http://elastic:9200/balance" \
 -H 'Content-Type: application/json' -d'
@@ -61,6 +62,11 @@ curl http://localhost:8000/create\
 ```
 
 The previous returns an ID. Use that for ID for the next calls.
+
+retrieve account
+```sh
+curl http://localhost:8000/{id}
+```
 
 deposit money
 ```sh

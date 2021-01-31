@@ -7,12 +7,13 @@ import (
 )
 
 type Balance struct {
-	ID      string       `json:"id"`
-	Version int64        `json:"version"`
-	EventID string       `json:"event_id"`
-	Status  event.Status `json:"status,omitempty"`
-	Balance int64        `json:"balance,omitempty"`
-	Owner   string       `json:"owner,omitempty"`
+	ID        string       `json:"id"`
+	Version   int64        `json:"version"`
+	EventID   string       `json:"event_id"`
+	Partition uint32       `json:"partition"`
+	Status    event.Status `json:"status,omitempty"`
+	Balance   int64        `json:"balance,omitempty"`
+	Owner     string       `json:"owner,omitempty"`
 }
 
 func (b Balance) IsZero() bool {
