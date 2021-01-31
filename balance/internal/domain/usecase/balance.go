@@ -167,14 +167,16 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context, afterEventID string)
 	})
 
 	return b.restarter.Restart(ctx, domain.ProjectionBalance, int(b.partitions), func(ctx context.Context) error {
-		logger.Info("Cleaning all balance data")
-		err := b.balanceRepository.ClearAllData(ctx)
-		if err != nil {
-			return faults.Errorf("Unable to clean balance data: %w", err)
+		if afterEventID == "" {
+			logger.Info("Cleaning all balance data")
+			err := b.balanceRepository.ClearAllData(ctx)
+			if err != nil {
+				return faults.Errorf("Unable to clean balance data: %w", err)
+			}
 		}
 
 		p := player.New(b.esRepo)
-		_, err = p.Replay(ctx, b.Handler, afterEventID, store.WithAggregateTypes(event.AggregateType_Account))
+		_, err := p.Replay(ctx, b.Handler, afterEventID, store.WithAggregateTypes(event.AggregateType_Account))
 		if err != nil {
 			return faults.Errorf("Unable to replay events after cleaning balance data: %w", err)
 		}
