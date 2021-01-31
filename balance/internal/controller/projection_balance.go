@@ -21,8 +21,8 @@ func (p ProjectionBalance) GetName() string {
 	return domain.ProjectionBalance
 }
 
-func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes []string, partition uint32) (string, error) {
-	lastEventID, err := p.balanceUsecase.GetLastEventID(ctx, int(partition))
+func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes []string) (string, error) {
+	lastEventID, err := p.balanceUsecase.GetLastEventID(ctx)
 	if err != nil {
 		return "", err
 	}

@@ -106,17 +106,14 @@ func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID string) (
 	return balance.EventID, nil
 }
 
-func (b BalanceRepository) GetMaxEventID(ctx context.Context, partition int) (string, error) {
-	s := fmt.Sprintf(`{
+func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
+	s := `{
 		"sort": [
 		  {
 			"event_id": { "order": "desc"}
 		  }
-		],
-		"query" : {
-			"term" : { "partition" : %d }
-		}
-	  }`, partition)
+		]
+	  }`
 
 	size := 1
 	req := esapi.SearchRequest{

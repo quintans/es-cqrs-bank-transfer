@@ -2,9 +2,12 @@ package controller
 
 import (
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
+	"github.com/quintans/eventstore/common"
 )
 
 type RestController struct {
@@ -20,7 +23,19 @@ func (ctl RestController) ListAll(c echo.Context) error {
 }
 
 func (ctl RestController) RebuildBalance(c echo.Context) error {
-	err := ctl.BalanceUsecase.RebuildBalance(c.Request().Context())
+	var afterEventID string
+
+	epoch := c.QueryParams().Get("epoch")
+	if epoch != "" {
+		secs, err := strconv.Atoi(epoch)
+		if err != nil {
+			return c.String(http.StatusBadRequest, err.Error())
+		}
+		ts := time.Unix(int64(secs), 0)
+		afterEventID = common.NewEventID(ts, "", 0)
+	}
+
+	err := ctl.BalanceUsecase.RebuildBalance(c.Request().Context(), afterEventID)
 	if err != nil {
 		return err
 	}

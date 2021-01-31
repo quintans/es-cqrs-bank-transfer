@@ -9,7 +9,6 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/eventstore"
-	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
 	"github.com/quintans/eventstore/store"
@@ -62,12 +61,9 @@ func (b BalanceUsecase) Handler(ctx context.Context, e eventstore.Event) error {
 		"event":      e,
 	})
 
-	p := common.WhichPartition(e.AggregateIDHash, uint32(b.partitions))
-
 	m := domain.Metadata{
 		AggregateID: e.AggregateID,
 		EventID:     e.ID,
-		Partition:   p,
 	}
 
 	evt, err := eventstore.RehydrateEvent(b.factory, b.codec, b.upcaster, e.Kind, e.Body)
@@ -99,12 +95,11 @@ func (b BalanceUsecase) accountCreated(ctx context.Context, m domain.Metadata, a
 	}
 
 	e := entity.Balance{
-		ID:        ac.ID,
-		EventID:   m.EventID,
-		Partition: m.Partition,
-		Owner:     ac.Owner,
-		Status:    event.OPEN,
-		Balance:   ac.Money,
+		ID:      ac.ID,
+		EventID: m.EventID,
+		Owner:   ac.Owner,
+		Status:  event.OPEN,
+		Balance: ac.Money,
 	}
 	logger.Infof("Creating account: ID: %s, Owner: %s, Balance: %d", ac.ID, ac.Owner, ac.Money)
 	return b.balanceRepository.CreateAccount(ctx, e)
@@ -123,11 +118,10 @@ func (b BalanceUsecase) moneyDeposited(ctx context.Context, m domain.Metadata, a
 		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
 	update := entity.Balance{
-		ID:        agg.ID,
-		Version:   agg.Version,
-		EventID:   m.EventID,
-		Partition: m.Partition,
-		Balance:   agg.Balance + ac.Money,
+		ID:      agg.ID,
+		Version: agg.Version,
+		EventID: m.EventID,
+		Balance: agg.Balance + ac.Money,
 	}
 	return b.balanceRepository.Update(ctx, update)
 }
@@ -145,11 +139,10 @@ func (b BalanceUsecase) moneyWithdrawn(ctx context.Context, m domain.Metadata, a
 		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
 	update := entity.Balance{
-		ID:        agg.ID,
-		Version:   agg.Version,
-		EventID:   m.EventID,
-		Partition: m.Partition,
-		Balance:   agg.Balance - ac.Money,
+		ID:      agg.ID,
+		Version: agg.Version,
+		EventID: m.EventID,
+		Balance: agg.Balance - ac.Money,
 	}
 	return b.balanceRepository.Update(ctx, update)
 }
@@ -168,7 +161,7 @@ func (b BalanceUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry, m
 	return false, nil
 }
 
-func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
+func (b BalanceUsecase) RebuildBalance(ctx context.Context, afterEventID string) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.RebuildBalance",
 	})
@@ -181,7 +174,7 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 		}
 
 		p := player.New(b.esRepo)
-		_, err = p.Replay(ctx, b.Handler, "", store.WithAggregateTypes(event.AggregateType_Account))
+		_, err = p.Replay(ctx, b.Handler, afterEventID, store.WithAggregateTypes(event.AggregateType_Account))
 		if err != nil {
 			return faults.Errorf("Unable to replay events after cleaning balance data: %w", err)
 		}
@@ -191,9 +184,9 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 
 }
 
-func (b BalanceUsecase) GetLastEventID(ctx context.Context, partition int) (string, error) {
+func (b BalanceUsecase) GetLastEventID(ctx context.Context) (string, error) {
 	// get the latest event ID from the eventstore
-	eventID, err := b.balanceRepository.GetMaxEventID(ctx, partition)
+	eventID, err := b.balanceRepository.GetMaxEventID(ctx)
 	if err != nil {
 		return "", fmt.Errorf("Could not get last event ID: %w", err)
 	}
