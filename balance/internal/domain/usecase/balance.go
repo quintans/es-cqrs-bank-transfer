@@ -9,6 +9,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/eventstore"
+	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
 	"github.com/quintans/eventstore/store"
@@ -24,7 +25,7 @@ var (
 type BalanceUsecase struct {
 	balanceRepository domain.BalanceRepository
 	restarter         projection.Restarter
-	partitions        int
+	partitions        uint32
 	factory           eventstore.Factory
 	codec             eventstore.Codec
 	upcaster          eventstore.Upcaster
@@ -34,7 +35,7 @@ type BalanceUsecase struct {
 func NewBalanceUsecase(
 	balanceRepository domain.BalanceRepository,
 	restarter projection.Restarter,
-	partitions int,
+	partitions uint32,
 	factory eventstore.Factory,
 	codec eventstore.Codec,
 	upcaster eventstore.Upcaster,
@@ -60,11 +61,13 @@ func (b BalanceUsecase) Handler(ctx context.Context, e eventstore.Event) error {
 		"projection": domain.ProjectionBalance,
 		"event":      e,
 	})
-	logger.Info("routing event")
+
+	p := common.WhichPartition(e.AggregateIDHash, uint32(b.partitions))
 
 	m := domain.Metadata{
 		AggregateID: e.AggregateID,
 		EventID:     e.ID,
+		Partition:   p,
 	}
 
 	evt, err := eventstore.RehydrateEvent(b.factory, b.codec, b.upcaster, e.Kind, e.Body)
@@ -96,11 +99,12 @@ func (b BalanceUsecase) accountCreated(ctx context.Context, m domain.Metadata, a
 	}
 
 	e := entity.Balance{
-		ID:      ac.ID,
-		EventID: m.EventID,
-		Owner:   ac.Owner,
-		Status:  event.OPEN,
-		Balance: ac.Money,
+		ID:        ac.ID,
+		EventID:   m.EventID,
+		Partition: m.Partition,
+		Owner:     ac.Owner,
+		Status:    event.OPEN,
+		Balance:   ac.Money,
 	}
 	logger.Infof("Creating account: ID: %s, Owner: %s, Balance: %d", ac.ID, ac.Owner, ac.Money)
 	return b.balanceRepository.CreateAccount(ctx, e)
@@ -119,10 +123,11 @@ func (b BalanceUsecase) moneyDeposited(ctx context.Context, m domain.Metadata, a
 		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
 	update := entity.Balance{
-		ID:      agg.ID,
-		Version: agg.Version,
-		EventID: m.EventID,
-		Balance: agg.Balance + ac.Money,
+		ID:        agg.ID,
+		Version:   agg.Version,
+		EventID:   m.EventID,
+		Partition: m.Partition,
+		Balance:   agg.Balance + ac.Money,
 	}
 	return b.balanceRepository.Update(ctx, update)
 }
@@ -140,10 +145,11 @@ func (b BalanceUsecase) moneyWithdrawn(ctx context.Context, m domain.Metadata, a
 		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
 	update := entity.Balance{
-		ID:      agg.ID,
-		Version: agg.Version,
-		EventID: m.EventID,
-		Balance: agg.Balance - ac.Money,
+		ID:        agg.ID,
+		Version:   agg.Version,
+		EventID:   m.EventID,
+		Partition: m.Partition,
+		Balance:   agg.Balance - ac.Money,
 	}
 	return b.balanceRepository.Update(ctx, update)
 }
@@ -167,7 +173,7 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 		"method": "BalanceUsecase.RebuildBalance",
 	})
 
-	return b.restarter.Restart(ctx, domain.ProjectionBalance, b.partitions, func(ctx context.Context) error {
+	return b.restarter.Restart(ctx, domain.ProjectionBalance, int(b.partitions), func(ctx context.Context) error {
 		logger.Info("Cleaning all balance data")
 		err := b.balanceRepository.ClearAllData(ctx)
 		if err != nil {
@@ -185,9 +191,9 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context) error {
 
 }
 
-func (b BalanceUsecase) GetLastEventID(ctx context.Context) (string, error) {
+func (b BalanceUsecase) GetLastEventID(ctx context.Context, partition int) (string, error) {
 	// get the latest event ID from the eventstore
-	eventID, err := b.balanceRepository.GetMaxEventID(ctx)
+	eventID, err := b.balanceRepository.GetMaxEventID(ctx, partition)
 	if err != nil {
 		return "", fmt.Errorf("Could not get last event ID: %w", err)
 	}

@@ -63,6 +63,11 @@ curl http://localhost:8000/create\
 
 The previous returns an ID. Use that for ID for the next calls.
 
+retrieve account
+```sh
+curl http://localhost:8000/{id}
+```
+
 deposit money
 ```sh
 curl http://localhost:8000/deposit\

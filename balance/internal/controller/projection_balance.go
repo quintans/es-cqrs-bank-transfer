@@ -22,7 +22,7 @@ func (p ProjectionBalance) GetName() string {
 }
 
 func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes []string, partition uint32) (string, error) {
-	lastEventID, err := p.balanceUsecase.GetLastEventID(ctx)
+	lastEventID, err := p.balanceUsecase.GetLastEventID(ctx, int(partition))
 	if err != nil {
 		return "", err
 	}
@@ -30,5 +30,5 @@ func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes
 }
 
 func (p ProjectionBalance) Handler(ctx context.Context, e eventstore.Event) error {
-	return p.Handler(ctx, e)
+	return p.balanceUsecase.Handler(ctx, e)
 }

@@ -83,6 +83,9 @@ func sourceToBalance(doc map[string]interface{}) entity.Balance {
 	if v, ok := source["event_id"]; ok {
 		b.EventID = v.(string)
 	}
+	if v, ok := source["partition"]; ok {
+		b.Partition = uint32(v.(float64))
+	}
 	if v, ok := source["status"]; ok {
 		b.Status = event.Status(v.(string))
 	}
@@ -103,14 +106,17 @@ func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID string) (
 	return balance.EventID, nil
 }
 
-func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
-	s := `{
+func (b BalanceRepository) GetMaxEventID(ctx context.Context, partition int) (string, error) {
+	s := fmt.Sprintf(`{
 		"sort": [
 		  {
 			"event_id": { "order": "desc"}
 		  }
-		]
-	  }`
+		],
+		"query" : {
+			"term" : { "partition" : %d }
+		}
+	  }`, partition)
 
 	size := 1
 	req := esapi.SearchRequest{

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -90,9 +89,9 @@ func Setup(cfg Config) {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	balanceRebuildLock := pool.NewLock("balance-freeze", cfg.LockExpiry)
+	restarterLock := pool.NewLock("balance-freeze", cfg.LockExpiry)
 	restarter := projection.NewNotifierLockRestarter(
-		balanceRebuildLock,
+		restarterLock,
 		natsSub,
 	)
 
@@ -107,9 +106,9 @@ func Setup(cfg Config) {
 		}
 	}
 
-	balanceUC := usecase.NewBalanceUsecase(repo, restarter, int(partitions),
+	balanceUC := usecase.NewBalanceUsecase(repo, restarter, partitions,
 		event.EventFactory{},
-		eventstore.JsonCodec{},
+		eventstore.JSONCodec{},
 		nil,
 		esRepo,
 	)
@@ -118,12 +117,12 @@ func Setup(cfg Config) {
 
 	workers := make([]worker.Worker, len(balancePartitions))
 	for i, v := range balancePartitions {
-		idx := strconv.Itoa(i)
+		slots := fmt.Sprintf("%d-%d", v.From, v.To)
 		workers[i] = worker.NewRunWorker(
-			"balance-projection-"+idx,
-			pool.NewLock("balance-lock-"+idx, cfg.LockExpiry),
+			"balance-projection-"+slots,
+			pool.NewLock("balance-lock-"+slots, cfg.LockExpiry),
 			projection.NewProjectionPartition(
-				balanceRebuildLock,
+				restarterLock,
 				prjCtrl,
 				natsSub,
 				partitions,

@@ -7,21 +7,16 @@ import (
 	"github.com/google/uuid"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
-	"github.com/quintans/eventstore"
 	log "github.com/sirupsen/logrus"
 )
 
-var (
-	ErrNotEnoughFunds = errors.New("Not enough funds")
-)
-
 type AccountUsecase struct {
-	es eventstore.EventStore
+	repo domain.AccountRepository
 }
 
-func NewAccountUsecase(es eventstore.EventStore) AccountUsecase {
+func NewAccountUsecase(repo domain.AccountRepository) AccountUsecase {
 	return AccountUsecase{
-		es: es,
+		repo: repo,
 	}
 }
 
@@ -30,47 +25,41 @@ func (uc AccountUsecase) Create(ctx context.Context, createAccount domain.Create
 	log.WithFields(log.Fields{
 		"method": "AccountUsecase.Create",
 	}).Infof("Creating account with owner:%s, id: %s, money: %d", createAccount.Owner, id, createAccount.Money)
+
 	acc := entity.CreateAccount(createAccount.Owner, id, createAccount.Money)
-	if err := uc.es.Save(ctx, acc); err != nil {
+	if err := uc.repo.Save(ctx, acc); err != nil {
 		return "", err
 	}
 	return id, nil
 }
 
 func (uc AccountUsecase) Deposit(ctx context.Context, cmd domain.DepositCommand) error {
-	a, err := uc.es.GetByID(ctx, cmd.ID)
-	if err != nil {
-		return err
-	}
-	acc := a.(*entity.Account)
-
 	log.WithFields(log.Fields{
 		"method": "AccountUsecase.Deposit",
 	}).Infof("Depositing id: %s, money: %d", cmd.ID, cmd.Money)
-	acc.Deposit(cmd.Money)
 
-	if err := uc.es.Save(ctx, acc); err != nil {
-		return err
-	}
+	return uc.repo.Exec(ctx, cmd.ID, func(acc *entity.Account) (*entity.Account, error) {
+		acc.Deposit(cmd.Money)
 
-	return nil
+		return acc, nil
+	})
 }
 
 func (uc AccountUsecase) Withdraw(ctx context.Context, cmd domain.WithdrawCommand) error {
-	a, err := uc.es.GetByID(ctx, cmd.ID)
-	if err != nil {
-		return err
-	}
-	acc := a.(*entity.Account)
-
 	log.WithFields(log.Fields{
 		"method": "AccountUsecase.Withdraw",
 	}).Infof("Depositing id: %s, money: %d", cmd.ID, cmd.Money)
-	if acc.Withdraw(cmd.Money) {
-		return uc.es.Save(ctx, acc)
-	}
 
-	return ErrNotEnoughFunds
+	return uc.repo.Exec(ctx, cmd.ID, func(acc *entity.Account) (*entity.Account, error) {
+		if acc.Withdraw(cmd.Money) {
+			err := uc.repo.Save(ctx, acc)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return acc, domain.ErrNotEnoughFunds
+	})
 }
 
 func (uc AccountUsecase) Transfer(ctx context.Context, cmd domain.TransferCommand) error {
@@ -78,14 +67,17 @@ func (uc AccountUsecase) Transfer(ctx context.Context, cmd domain.TransferComman
 }
 
 func (uc AccountUsecase) Balance(ctx context.Context, id string) (domain.AccountDTO, error) {
-	agg, err := uc.es.GetByID(ctx, id)
+	var dto domain.AccountDTO
+
+	acc, err := uc.repo.Get(ctx, id)
 	if err != nil {
 		return domain.AccountDTO{}, err
 	}
-	acc := agg.(*entity.Account)
-	return domain.AccountDTO{
+	dto = domain.AccountDTO{
 		Owner:   acc.Owner,
 		Balance: acc.Balance,
 		Status:  string(acc.Status),
-	}, nil
+	}
+
+	return dto, nil
 }

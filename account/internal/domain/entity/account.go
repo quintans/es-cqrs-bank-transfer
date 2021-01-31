@@ -3,6 +3,7 @@ package entity
 import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/eventstore"
+	"github.com/quintans/faults"
 )
 
 func CreateAccount(owner string, id string, money int64) *Account {
@@ -86,13 +87,24 @@ func (a *Account) UpdateOwner(owner string) {
 	a.ApplyChange(event.OwnerUpdated{Owner: owner})
 }
 
-type Factory struct {
-	Factory eventstore.Factory
-}
+type EventFactory struct{}
 
-func (f Factory) New(kind string) (eventstore.Typer, error) {
-	if kind == event.AggregateType_Account {
-		return NewAccount(), nil
+func (_ EventFactory) New(kind string) (eventstore.Typer, error) {
+	var e eventstore.Typer
+	switch kind {
+	case "Account":
+		e = NewAccount()
+	case "AccountCreated":
+		e = &event.AccountCreated{}
+	case "MoneyDeposited":
+		e = &event.MoneyDeposited{}
+	case "MoneyWithdrawn":
+		e = &event.MoneyWithdrawn{}
+	case "OwnerUpdated":
+		e = &event.OwnerUpdated{}
+	default:
+		return nil, faults.Errorf("Unknown event kind: %s", kind)
 	}
-	return f.Factory.New(kind)
+
+	return e, nil
 }

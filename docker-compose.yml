@@ -15,29 +15,15 @@ services:
   #     - ES_HOST=mongo
   #     - ES_NAME=accounts
   #     - API_PORT=8000
-  #   networks:
-  #     - my-network
-  #   ports:
-  #     - 8000:8000
-  #     - 3000:3000
-
-  # svc-forwarder:
-  #   build: 
-  #     context: ./forwarder
-  #     # dockerfile: ./Dockerfile
-  #   depends_on:
-  #     - mongo
-  #     - nats
-  #     - consul
-  #   environment:
-  #     - ES_HOST=mongo
-  #     - ES_NAME=accounts
   #     - NATS_ADDRESS=nats:4222
   #     - TOPIC=accounts
   #     - CONSUL_ADDRESS=consul:8500
   #     - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
   #   networks:
   #     - my-network
+  #   ports:
+  #     - 8000:8000
+  #     - 3000:3000
 
   # svc-balance:
   #   build: 
