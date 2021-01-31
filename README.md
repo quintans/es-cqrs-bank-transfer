@@ -7,10 +7,9 @@ This is achieved by partitioning events and having workers handling them. These 
 
 This project has several moving pieces
 * MongoDB: the event store database
-* Account Service: the write side of things. This writes into the event store.
-* Forwarder Service: Listens the event store for new events and publish them into a MQ. Publishing is partitioned over several topics with the same prefix. eg: `balance.2`.
+* Account Service: the write side of things. This service writes into the event store. Additionally listens the database for new event records and publish them into a MQ. Publishing is partitioned over several topics with the same prefix. eg: `balance.2`. Finally it also exposes gRPC endpoints for projections in other services to be able to rebuild themselves.
 * Balance Service: reads the MQ and updates its projection(s). Several listeners are created according to number of partitions.
-* NATS: the message queue
+* NATS: the message bus
 * Elasticsearch: the projection database
 * Redis: for distributed locking.
 
