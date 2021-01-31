@@ -37,7 +37,13 @@ type Hits struct {
 }
 
 type BalanceRepository struct {
-	Client *elasticsearch.Client
+	client *elasticsearch.Client
+}
+
+func NewBalanceRepository(client *elasticsearch.Client) BalanceRepository {
+	return BalanceRepository{
+		client: client,
+	}
 }
 
 func (b BalanceRepository) GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.Balance, error) {
@@ -45,7 +51,7 @@ func (b BalanceRepository) GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.
 		Index: []string{index},
 		Sort:  []string{ownerField + ":asc"},
 	}
-	res, err := req.Do(ctx, b.Client)
+	res, err := req.Do(ctx, b.client)
 	if err != nil {
 		return []entity.Balance{}, fmt.Errorf("Error getting response for SearchRequest: %w", err)
 	}
@@ -121,7 +127,7 @@ func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
 		Body:  strings.NewReader(s),
 		Size:  &size,
 	}
-	res, err := req.Do(ctx, b.Client)
+	res, err := req.Do(ctx, b.client)
 	if err != nil {
 		return "", fmt.Errorf("Error getting response for SearchRequest: %w", err)
 	}
@@ -156,7 +162,7 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 		Refresh:    "true",
 	}
 
-	res, err := req.Do(ctx, b.Client)
+	res, err := req.Do(ctx, b.client)
 	if err != nil {
 		return fmt.Errorf("Error getting response for IndexRequest: %w", err)
 	}
@@ -173,7 +179,7 @@ func (b BalanceRepository) GetByID(ctx context.Context, aggregateID string) (ent
 		Index:      index,
 		DocumentID: aggregateID,
 	}
-	res, err := req.Do(ctx, b.Client)
+	res, err := req.Do(ctx, b.client)
 	if err != nil {
 		return entity.Balance{}, fmt.Errorf("Error getting response for GetRequest: %w", err)
 	}
@@ -219,7 +225,7 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 		Refresh:    "true",
 	}
 
-	res, err := req.Do(ctx, b.Client)
+	res, err := req.Do(ctx, b.client)
 	if err != nil {
 		return fmt.Errorf("Error getting response for UpdateRequest(balance): %w", err)
 	}
@@ -243,7 +249,7 @@ func (b BalanceRepository) ClearAllData(ctx context.Context) error {
 		}`),
 		Refresh: &refresh,
 	}
-	resDel, err := del.Do(ctx, b.Client)
+	resDel, err := del.Do(ctx, b.client)
 	if err != nil {
 		return fmt.Errorf("Error getting response when deleting docs ClearAllData(balance): %w", err)
 	}

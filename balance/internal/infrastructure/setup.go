@@ -70,9 +70,7 @@ func Setup(cfg Config) {
 	defer res.Body.Close()
 	log.Println("Elasticsearch info: ", res)
 
-	repo := gateway.BalanceRepository{
-		Client: es,
-	}
+	repo := gateway.NewBalanceRepository(es)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// es player
