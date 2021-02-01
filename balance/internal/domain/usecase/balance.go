@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/eventstore"
+	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
 	"github.com/quintans/eventstore/store"
@@ -24,7 +26,7 @@ var (
 type BalanceUsecase struct {
 	balanceRepository domain.BalanceRepository
 	restarter         projection.Restarter
-	partitions        uint32
+	listenerCount     uint32
 	factory           eventstore.Factory
 	codec             eventstore.Codec
 	upcaster          eventstore.Upcaster
@@ -34,7 +36,7 @@ type BalanceUsecase struct {
 func NewBalanceUsecase(
 	balanceRepository domain.BalanceRepository,
 	restarter projection.Restarter,
-	partitions uint32,
+	listenerCount uint32,
 	factory eventstore.Factory,
 	codec eventstore.Codec,
 	upcaster eventstore.Upcaster,
@@ -43,7 +45,7 @@ func NewBalanceUsecase(
 	return BalanceUsecase{
 		balanceRepository: balanceRepository,
 		restarter:         restarter,
-		partitions:        partitions,
+		listenerCount:     listenerCount,
 		factory:           factory,
 		codec:             codec,
 		upcaster:          upcaster,
@@ -161,18 +163,21 @@ func (b BalanceUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry, m
 	return false, nil
 }
 
-func (b BalanceUsecase) RebuildBalance(ctx context.Context, afterEventID string) error {
+func (b BalanceUsecase) RebuildBalance(ctx context.Context, after time.Time) error {
 	logger := log.WithFields(log.Fields{
 		"method": "BalanceUsecase.RebuildBalance",
 	})
 
-	return b.restarter.Restart(ctx, domain.ProjectionBalance, int(b.partitions), func(ctx context.Context) error {
-		if afterEventID == "" {
+	return b.restarter.Restart(ctx, domain.ProjectionBalance, int(b.listenerCount), func(ctx context.Context) error {
+		var afterEventID string
+		if after.IsZero() {
 			logger.Info("Cleaning all balance data")
 			err := b.balanceRepository.ClearAllData(ctx)
 			if err != nil {
 				return faults.Errorf("Unable to clean balance data: %w", err)
 			}
+		} else {
+			afterEventID = common.NewEventID(after, "", 0)
 		}
 
 		p := player.New(b.esRepo)
@@ -183,7 +188,6 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context, afterEventID string)
 
 		return nil
 	})
-
 }
 
 func (b BalanceUsecase) GetLastEventID(ctx context.Context) (string, error) {

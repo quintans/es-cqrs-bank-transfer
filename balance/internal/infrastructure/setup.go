@@ -97,14 +97,9 @@ func Setup(cfg Config) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	var partitions uint32
-	for _, v := range balancePartitions {
-		if v.To > partitions {
-			partitions = v.To
-		}
-	}
 
-	balanceUC := usecase.NewBalanceUsecase(repo, restarter, partitions,
+	listenerCount := uint32(len(balancePartitions))
+	balanceUC := usecase.NewBalanceUsecase(repo, restarter, listenerCount,
 		event.EventFactory{},
 		eventstore.JSONCodec{},
 		nil,
@@ -123,7 +118,7 @@ func Setup(cfg Config) {
 				restarterLock,
 				prjCtrl,
 				natsSub,
-				partitions,
+				listenerCount,
 				projection.BootStage{
 					AggregateTypes: []string{event.AggregateType_Account},
 					Subscriber:     natsSub,

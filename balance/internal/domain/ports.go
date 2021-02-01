@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"time"
 
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/eventstore"
@@ -21,7 +22,7 @@ type LastIDs struct {
 type BalanceUsecase interface {
 	ListAll(ctx context.Context) ([]entity.Balance, error)
 	Handler(ctx context.Context, e eventstore.Event) error
-	RebuildBalance(ctx context.Context, afterEventID string) error
+	RebuildBalance(ctx context.Context, after time.Time) error
 	GetLastEventID(ctx context.Context) (string, error)
 }
 
