@@ -16,10 +16,12 @@
             },
             {
                 "key": {
-                    "idempotency_key": 1,
-                    "aggregate_id": 1
+                    "aggregate_id": 1,
+                    "idempotency_key": 1
                 },
                 "name": "idx_idempotency_aggregate",
+                "unique": true,
+                "partialFilterExpression": { "idempotency_key": { "$gt": "" } },
                 "background": true
             }
         ]

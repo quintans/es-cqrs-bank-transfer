@@ -3,17 +3,30 @@ package controller
 import (
 	"context"
 
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/eventstore"
+	log "github.com/sirupsen/logrus"
 )
 
 type ProjectionBalance struct {
-	balanceUsecase domain.BalanceUsecase
+	projectionUC domain.ProjectionUsecase
+	factory      eventstore.Factory
+	codec        eventstore.Codec
+	upcaster     eventstore.Upcaster
 }
 
-func NewProjectionBalance(balanceUsecase domain.BalanceUsecase) ProjectionBalance {
+func NewProjectionBalance(
+	projectionUC domain.ProjectionUsecase,
+	factory eventstore.Factory,
+	codec eventstore.Codec,
+	upcaster eventstore.Upcaster,
+) ProjectionBalance {
 	return ProjectionBalance{
-		balanceUsecase: balanceUsecase,
+		projectionUC: projectionUC,
+		factory:      factory,
+		codec:        codec,
+		upcaster:     upcaster,
 	}
 }
 
@@ -22,13 +35,38 @@ func (p ProjectionBalance) GetName() string {
 }
 
 func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes []string) (string, error) {
-	lastEventID, err := p.balanceUsecase.GetLastEventID(ctx)
+	lastEventID, err := p.projectionUC.GetLastEventID(ctx)
 	if err != nil {
 		return "", err
 	}
 	return lastEventID, nil
 }
 
-func (p ProjectionBalance) Handler(ctx context.Context, e eventstore.Event) error {
-	return p.balanceUsecase.Handler(ctx, e)
+func (p ProjectionBalance) Handle(ctx context.Context, e eventstore.Event) error {
+	logger := log.WithFields(log.Fields{
+		"projection": domain.ProjectionBalance,
+		"event":      e,
+	})
+
+	m := domain.Metadata{
+		AggregateID: e.AggregateID,
+		EventID:     e.ID,
+	}
+
+	evt, err := eventstore.RehydrateEvent(p.factory, p.codec, p.upcaster, e.Kind, e.Body)
+	if err != nil {
+		return err
+	}
+
+	switch t := evt.(type) {
+	case event.AccountCreated:
+		err = p.projectionUC.AccountCreated(ctx, m, t)
+	case event.MoneyDeposited:
+		err = p.projectionUC.MoneyDeposited(ctx, m, t)
+	case event.MoneyWithdrawn:
+		err = p.projectionUC.MoneyWithdrawn(ctx, m, t)
+	default:
+		logger.Warnf("Unknown event type: %s\n", e.Kind)
+	}
+	return err
 }

@@ -1,31 +1,16 @@
 package entity
 
 import (
+	"errors"
+
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/eventstore"
-	"github.com/quintans/faults"
 )
 
-func CreateAccount(owner string, id string, money int64) *Account {
-	a := &Account{
-		Status:  event.OPEN,
-		Balance: money,
-		Owner:   owner,
-	}
-	a.RootAggregate = eventstore.NewRootAggregate(a)
-	a.ApplyChange(event.AccountCreated{
-		ID:    id,
-		Money: money,
-		Owner: owner,
-	})
-	return a
-}
-
-func NewAccount() *Account {
-	a := &Account{}
-	a.RootAggregate = eventstore.NewRootAggregate(a)
-	return a
-}
+var (
+	ErrNotEnoughFunds       = errors.New("not enough funds")
+	ErrTransactionsDisabled = errors.New("transactions disabled")
+)
 
 type Account struct {
 	eventstore.RootAggregate
@@ -34,6 +19,11 @@ type Account struct {
 	Owner   string       `json:"owner,omitempty"`
 }
 
+func NewAccount() *Account {
+	a := &Account{}
+	a.RootAggregate = eventstore.NewRootAggregate(a)
+	return a
+}
 func (a Account) GetType() string {
 	return event.AggregateType_Account
 }
@@ -51,6 +41,19 @@ func (a *Account) HandleEvent(e eventstore.Eventer) {
 	}
 }
 
+func CreateAccount(owner string, id string) *Account {
+	a := &Account{
+		Status: event.OPEN,
+		Owner:  owner,
+	}
+	a.RootAggregate = eventstore.NewRootAggregate(a)
+	a.ApplyChange(event.AccountCreated{
+		ID:    id,
+		Owner: owner,
+	})
+	return a
+}
+
 func (a *Account) HandleAccountCreated(e event.AccountCreated) {
 	a.ID = e.ID
 	a.Balance = e.Money
@@ -59,52 +62,43 @@ func (a *Account) HandleAccountCreated(e event.AccountCreated) {
 	a.Status = event.OPEN
 }
 
-func (a *Account) HandleMoneyDeposited(event event.MoneyDeposited) {
-	a.Balance += event.Money
+func (a *Account) Withdraw(txID string, money int64) error {
+	if a.Balance < money {
+		return ErrNotEnoughFunds
+	}
+	if a.Status != event.OPEN {
+		return ErrTransactionsDisabled
+	}
+	a.ApplyChange(event.MoneyWithdrawn{
+		Money:         money,
+		TransactionID: txID,
+	})
+	return nil
 }
 
 func (a *Account) HandleMoneyWithdrawn(event event.MoneyWithdrawn) {
 	a.Balance -= event.Money
 }
 
-func (a *Account) HandleOwnerUpdated(event event.OwnerUpdated) {
-	a.Owner = event.Owner
-}
-
-func (a *Account) Withdraw(money int64) bool {
-	if a.Balance >= money {
-		a.ApplyChange(event.MoneyWithdrawn{Money: money})
-		return true
+func (a *Account) Deposit(txID string, money int64) error {
+	if a.Status != event.OPEN {
+		return ErrTransactionsDisabled
 	}
-	return false
+	a.ApplyChange(event.MoneyDeposited{
+		Money:         money,
+		TransactionID: txID,
+	})
+	return nil
 }
 
-func (a *Account) Deposit(money int64) {
-	a.ApplyChange(event.MoneyDeposited{Money: money})
+func (a *Account) HandleMoneyDeposited(event event.MoneyDeposited) {
+	a.Balance += event.Money
 }
 
 func (a *Account) UpdateOwner(owner string) {
 	a.ApplyChange(event.OwnerUpdated{Owner: owner})
 }
 
-type EventFactory struct{}
-
-func (_ EventFactory) New(kind string) (eventstore.Typer, error) {
-	var e eventstore.Typer
-	switch kind {
-	case "Account":
-		e = NewAccount()
-	case "AccountCreated":
-		e = &event.AccountCreated{}
-	case "MoneyDeposited":
-		e = &event.MoneyDeposited{}
-	case "MoneyWithdrawn":
-		e = &event.MoneyWithdrawn{}
-	case "OwnerUpdated":
-		e = &event.OwnerUpdated{}
-	default:
-		return nil, faults.Errorf("Unknown event kind: %s", kind)
-	}
-
-	return e, nil
+func (a *Account) HandleOwnerUpdated(event event.OwnerUpdated) {
+	a.Owner = event.Owner
 }

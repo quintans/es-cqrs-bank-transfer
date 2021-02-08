@@ -5,24 +5,26 @@ import (
 	"errors"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
 
-type CreateCommand struct {
+type CreateAccountCommand struct {
 	Owner string `json:"owner"`
-	Money int64  `json:"money"`
 }
 
 type DepositCommand struct {
-	ID    string `json:"id"`
-	Money int64  `json:"money"`
+	ID            string `json:"id"`
+	Money         int64  `json:"money"`
+	TransactionID string `json:"transaction"`
 }
 
 type WithdrawCommand struct {
-	ID    string `json:"id"`
-	Money int64  `json:"money"`
+	ID            string `json:"id"`
+	Money         int64  `json:"money"`
+	TransactionID string `json:"transaction"`
 }
 
-type TransferCommand struct {
+type CreateTransactionCommand struct {
 	From  string `json:"from"`
 	To    string `json:"to"`
 	Money int64  `json:"money"`
@@ -35,20 +37,32 @@ type AccountDTO struct {
 }
 
 var (
-	ErrUnknownAccount = errors.New("Unknown account")
-	ErrNotEnoughFunds = errors.New("Not enough funds")
+	ErrEntityNotFound = errors.New("entity not found")
 )
 
 type AccountUsecaser interface {
-	Create(ctx context.Context, cmd CreateCommand) (string, error)
-	Deposit(ctx context.Context, cmd DepositCommand) error
-	Withdraw(ctx context.Context, cmd WithdrawCommand) error
-	Transfer(ctx context.Context, cmd TransferCommand) error
+	Create(ctx context.Context, cmd CreateAccountCommand) (string, error)
 	Balance(ctx context.Context, id string) (AccountDTO, error)
 }
 
 type AccountRepository interface {
 	Get(ctx context.Context, id string) (*entity.Account, error)
-	Save(ctx context.Context, agg *entity.Account) error
-	Exec(ctx context.Context, id string, do func(*entity.Account) (*entity.Account, error)) error
+	New(ctx context.Context, agg *entity.Account) error
+	Exec(ctx context.Context, id string, do func(*entity.Account) (*entity.Account, error), idempotencyKey string) error
+}
+
+type Metadata struct {
+	EventID     string
+	AggregateID string
+}
+type TransactionUsecaser interface {
+	Create(ctx context.Context, cmd CreateTransactionCommand) (string, error)
+	TransactionCreated(ctx context.Context, e event.TransactionCreated) error
+	TransactionFailed(ctx context.Context, aggregateID string, e event.TransactionFailed) error
+}
+
+type TransactionRepository interface {
+	Get(ctx context.Context, id string) (*entity.Transaction, error)
+	CreateIfNew(ctx context.Context, agg *entity.Transaction) (bool, error)
+	Exec(ctx context.Context, id string, do func(*entity.Transaction) (*entity.Transaction, error)) error
 }

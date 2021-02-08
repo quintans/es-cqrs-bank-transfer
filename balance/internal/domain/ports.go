@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/eventstore"
 )
@@ -19,11 +20,16 @@ type LastIDs struct {
 	MqMessageID []byte
 }
 
+type ProjectionUsecase interface {
+	AccountCreated(ctx context.Context, m Metadata, ac event.AccountCreated) error
+	MoneyDeposited(ctx context.Context, m Metadata, ac event.MoneyDeposited) error
+	MoneyWithdrawn(ctx context.Context, m Metadata, ac event.MoneyWithdrawn) error
+	GetLastEventID(ctx context.Context) (string, error)
+}
+
 type BalanceUsecase interface {
 	ListAll(ctx context.Context) ([]entity.Balance, error)
-	Handler(ctx context.Context, e eventstore.Event) error
 	RebuildBalance(ctx context.Context, after time.Time) error
-	GetLastEventID(ctx context.Context) (string, error)
 }
 
 type BalanceRepository interface {
@@ -34,6 +40,10 @@ type BalanceRepository interface {
 	GetByID(ctx context.Context, aggregateID string) (entity.Balance, error)
 	Update(ctx context.Context, balance entity.Balance) error
 	ClearAllData(ctx context.Context) error
+}
+
+type EventHandler interface {
+	Handle(ctx context.Context, e eventstore.Event) error
 }
 
 const (

@@ -11,6 +11,7 @@ import (
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
+	"github.com/quintans/faults"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -181,7 +182,7 @@ func (b BalanceRepository) GetByID(ctx context.Context, aggregateID string) (ent
 	}
 	res, err := req.Do(ctx, b.client)
 	if err != nil {
-		return entity.Balance{}, fmt.Errorf("Error getting response for GetRequest: %w", err)
+		return entity.Balance{}, faults.Errorf("Error getting response for GetRequest: %w", err)
 	}
 	defer res.Body.Close()
 
@@ -190,14 +191,14 @@ func (b BalanceRepository) GetByID(ctx context.Context, aggregateID string) (ent
 	}
 
 	if res.IsError() {
-		return entity.Balance{}, fmt.Errorf("[%s] Error getting document ID=%s", res.Status(), aggregateID)
+		return entity.Balance{}, faults.Errorf("[%s] Error getting document ID=%s", res.Status(), aggregateID)
 	}
 	// Deserialize the response into a map.
 	r := GetResponse{
 		Source: &entity.Balance{},
 	}
 	if err := json.NewDecoder(res.Body).Decode(&r); err != nil {
-		return entity.Balance{}, fmt.Errorf("Error parsing the response body for GetRequest: %w", err)
+		return entity.Balance{}, faults.Errorf("Error parsing the response body for GetRequest: %w", err)
 	}
 	balance := r.Source.(*entity.Balance)
 	balance.ID = r.ID
@@ -227,12 +228,12 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 
 	res, err := req.Do(ctx, b.client)
 	if err != nil {
-		return fmt.Errorf("Error getting response for UpdateRequest(balance): %w", err)
+		return faults.Errorf("Error getting response for UpdateRequest(balance): %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("[%s] Error updating document ID=%s", res.Status(), docID)
+		return faults.Errorf("[%s] Error updating document ID=%s", res.Status(), docID)
 	}
 	return nil
 }
@@ -251,11 +252,11 @@ func (b BalanceRepository) ClearAllData(ctx context.Context) error {
 	}
 	resDel, err := del.Do(ctx, b.client)
 	if err != nil {
-		return fmt.Errorf("Error getting response when deleting docs ClearAllData(balance): %w", err)
+		return faults.Errorf("Error getting response when deleting docs ClearAllData(balance): %w", err)
 	}
 	defer resDel.Body.Close()
 	if resDel.IsError() {
-		return fmt.Errorf("[%s] Error deleting docs", resDel.Status())
+		return faults.Errorf("[%s] Error deleting docs", resDel.Status())
 	}
 
 	return nil
@@ -269,7 +270,7 @@ func walkMap(m map[string]interface{}, path string) (interface{}, error) {
 		k := fields[i]
 		v := current[k]
 		if v == nil {
-			return nil, fmt.Errorf("Path not found: %s", k)
+			return nil, faults.Errorf("Path not found: %s", k)
 		}
 		current = v.(map[string]interface{})
 	}

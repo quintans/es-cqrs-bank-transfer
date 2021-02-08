@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v7"
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
@@ -16,10 +18,13 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
 	"github.com/quintans/eventstore"
+	"github.com/quintans/eventstore/common"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
+	"github.com/quintans/eventstore/projection/resumestore"
 	"github.com/quintans/eventstore/subscriber"
 	"github.com/quintans/eventstore/worker"
+	"github.com/quintans/faults"
 	"github.com/quintans/toolkit/locks"
 	log "github.com/sirupsen/logrus"
 )
@@ -31,7 +36,7 @@ const (
 type Config struct {
 	ApiPort          int      `env:"API_PORT" envDefault:"8030"`
 	ElasticAddresses []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
-	PartitionSlots   []string `env:"PARTITION_SLOTS" envSeparator:","`
+	Partitions       uint32   `env:"PARTITIONS"`
 	ConfigEs
 	ConfigRedis
 	ConfigNats
@@ -76,7 +81,7 @@ func Setup(cfg Config) {
 	// es player
 	esRepo := player.NewGrpcRepository(cfg.EsAddress)
 
-	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance", cfg.Topic, NotificationTopic)
+	natsNotifier, err := subscriber.NewNatsProjectionSubscriber(ctx, cfg.NatsAddress, NotificationTopic)
 	if err != nil {
 		log.Fatalf("Error creating NATS subscriber: %s", err)
 	}
@@ -87,46 +92,66 @@ func Setup(cfg Config) {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	restarterLock := pool.NewLock("balance-freeze", cfg.LockExpiry)
-	restarter := projection.NewNotifierLockRestarter(
-		restarterLock,
-		natsSub,
-	)
-
-	balancePartitions, err := worker.ParseSlots(cfg.PartitionSlots)
+	streamResumer, err := resumestore.NewElasticSearchStreamResumer(cfg.ElasticAddresses, "stream_resume")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("Error instantiating Locker: %v", err)
+	}
+	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance-"+uuid.New().String(), streamResumer)
+	if err != nil {
+		log.Fatalf("Error creating NATS subscriber: %s", err)
 	}
 
-	listenerCount := uint32(len(balancePartitions))
-	balanceUC := usecase.NewBalanceUsecase(repo, restarter, listenerCount,
-		event.EventFactory{},
-		eventstore.JSONCodec{},
-		nil,
-		esRepo,
+	tokenStreams := []projection.StreamResume{}
+	unlockWaiter := pool.NewLock("balance-freeze", cfg.LockExpiry)
+	restarter := projection.NewNotifierLockRestarter(
+		unlockWaiter,
+		natsNotifier,
+		func(ctx context.Context) error {
+			for _, ts := range tokenStreams {
+				token, err := natsSub.GetResumeToken(ctx, ts.Topic)
+				if err != nil {
+					return faults.Wrap(err)
+				}
+				err = streamResumer.SetStreamResumeToken(ctx, ts.String(), token)
+				if err != nil {
+					return faults.Wrap(err)
+				}
+			}
+			return nil
+		},
 	)
 
-	prjCtrl := controller.NewProjectionBalance(balanceUC)
+	prjUC := usecase.NewProjectionUsecase(repo)
 
-	workers := make([]worker.Worker, len(balancePartitions))
-	for i, v := range balancePartitions {
-		slots := fmt.Sprintf("%d-%d", v.From, v.To)
-		workers[i] = worker.NewRunWorker(
-			"balance-projection-"+slots,
-			pool.NewLock("balance-lock-"+slots, cfg.LockExpiry),
-			projection.NewProjectionPartition(
-				restarterLock,
-				prjCtrl,
-				natsSub,
-				listenerCount,
-				projection.BootStage{
-					AggregateTypes: []string{event.AggregateType_Account},
-					Subscriber:     natsSub,
-					Repository:     esRepo,
-					PartitionLo:    v.From,
-					PartitionHi:    v.To,
-				},
-			))
+	prjCtrl := controller.NewProjectionBalance(prjUC, event.EventFactory{}, eventstore.JSONCodec{}, nil)
+
+	balanceUC := usecase.NewBalanceUsecase(repo, restarter, cfg.Partitions, esRepo, prjCtrl)
+
+	workers := make([]worker.Worker, cfg.Partitions)
+	var i uint32
+	for i = 1; i <= cfg.Partitions; i++ {
+		idx := strconv.Itoa(int(i))
+		resume := projection.StreamResume{
+			Topic:  common.TopicWithPartition(cfg.Topic, i),
+			Stream: "balance-projection",
+		}
+		tokenStreams = append(tokenStreams, resume)
+		runner := projection.NewProjectionPartition(
+			unlockWaiter,
+			natsNotifier,
+			natsSub,
+			resume,
+			func(e eventstore.Event) bool {
+				// just to demo filter capability
+				return common.In(e.AggregateType, event.AggregateType_Account)
+			},
+			prjCtrl.Handle,
+		)
+		workers[i-1] = worker.NewRunWorker(
+			"balance-projection-"+idx,
+			pool.NewLock("balance-lock-"+idx, cfg.LockExpiry),
+			runner,
+		)
 	}
 
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulAddress, "balance-member", cfg.LockExpiry)

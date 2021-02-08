@@ -8,23 +8,25 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 )
 
-type Controller struct {
-	accountUc domain.AccountUsecaser
+type RestController struct {
+	accUC domain.AccountUsecaser
+	txUC  domain.TransactionUsecaser
 }
 
-func NewController(accountUc domain.AccountUsecaser) Controller {
-	return Controller{
-		accountUc: accountUc,
+func NewRestController(accountUc domain.AccountUsecaser, txUC domain.TransactionUsecaser) RestController {
+	return RestController{
+		accUC: accountUc,
+		txUC:  txUC,
 	}
 }
 
 // Create calls the usecase to crete a new account
-func (ctl Controller) Create(c echo.Context) error {
-	cmd := domain.CreateCommand{}
+func (ctl RestController) Create(c echo.Context) error {
+	cmd := domain.CreateAccountCommand{}
 	if err := c.Bind(&cmd); err != nil {
 		return err
 	}
-	id, err := ctl.accountUc.Create(c.Request().Context(), cmd)
+	id, err := ctl.accUC.Create(c.Request().Context(), cmd)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {
 		return err
@@ -32,39 +34,22 @@ func (ctl Controller) Create(c echo.Context) error {
 	return c.JSON(http.StatusCreated, id)
 }
 
-func (ctl Controller) Deposit(c echo.Context) error {
-	cmd := domain.DepositCommand{}
+func (ctl RestController) Transaction(c echo.Context) error {
+	cmd := domain.CreateTransactionCommand{}
 	if err := c.Bind(&cmd); err != nil {
 		return err
 	}
-	err := ctl.accountUc.Deposit(c.Request().Context(), cmd)
+	id, err := ctl.txUC.Create(c.Request().Context(), cmd)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {
 		return err
 	}
-	return c.NoContent(http.StatusOK)
+	return c.JSON(http.StatusCreated, id)
 }
 
-func (ctl Controller) Withdraw(c echo.Context) error {
-	cmd := domain.WithdrawCommand{}
-	if err := c.Bind(&cmd); err != nil {
-		return err
-	}
-	err := ctl.accountUc.Withdraw(c.Request().Context(), cmd)
-	ok, err := resolveError(c, err)
-	if ok || err != nil {
-		return err
-	}
-	return c.NoContent(http.StatusOK)
-}
-
-func (ctl Controller) Transfer(c echo.Context) error {
-	return errors.New("Not implemented")
-}
-
-func (ctl Controller) Balance(c echo.Context) error {
+func (ctl RestController) Balance(c echo.Context) error {
 	id := c.Param("id")
-	dto, err := ctl.accountUc.Balance(c.Request().Context(), id)
+	dto, err := ctl.accUC.Balance(c.Request().Context(), id)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {
 		return err
@@ -73,7 +58,7 @@ func (ctl Controller) Balance(c echo.Context) error {
 }
 
 func resolveError(c echo.Context, err error) (bool, error) {
-	if errors.Is(err, domain.ErrUnknownAccount) {
+	if errors.Is(err, domain.ErrEntityNotFound) {
 		e := c.String(http.StatusNotFound, err.Error())
 		return true, e
 	}

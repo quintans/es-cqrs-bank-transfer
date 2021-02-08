@@ -4,6 +4,7 @@ import (
 	"os"
 
 	"github.com/caarlos0/env/v6"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/infrastructure"
 	log "github.com/sirupsen/logrus"
 )

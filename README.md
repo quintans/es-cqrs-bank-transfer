@@ -7,7 +7,7 @@ This is achieved by partitioning events and having workers handling them. These 
 
 This project has several moving pieces
 * MongoDB: the event store database
-* Account Service: the write side of things. This service writes into the event store. Additionally listens the database for new event records and publish them into a MQ. Publishing is partitioned over several topics with the same prefix. eg: `balance.2`. Finally it also exposes gRPC endpoints for projections in other services to be able to rebuild themselves.
+* Account Service: the write side of things. This service writes into the event store. Additionally listens the database for new event records and publish them into a MQ. Publishing is partitioned over several topics with the same prefix. eg: `balance.1` and `balance.2`. Finally it also exposes gRPC endpoints for projections in other services to be able to replay events and rebuild themselves.
 * Balance Service: reads the MQ and updates its projection(s). Several listeners are created according to number of partitions.
 * NATS: the message bus
 * Elasticsearch: the projection database
@@ -53,32 +53,40 @@ List all indexes
 curl http://localhost:9200/_cat/indices
 ```
 
-create a user account with some money
+create a user account
 ```sh
-curl http://localhost:8000/create\
+curl http://localhost:8000/accounts\
   -H "Content-Type: application/json" \
-  -d '{"owner":"Paulo", "money": 50}' 
+  -d '{"owner":"Paulo"}' 
 ```
 
 The previous returns an ID. Use that for ID for the next calls.
 
 retrieve account
 ```sh
-curl http://localhost:8000/{id}
+curl http://localhost:8000/accounts/{id}
 ```
 
 deposit money
 ```sh
-curl http://localhost:8000/deposit\
+curl http://localhost:8000/transactions\
   -H "Content-Type: application/json" \
-  -d '{"id":"<ID>", "money": 100}' 
+  -d '{"to":"<ID>", "money": 100}' 
 ```
 
 withdraw money
 ```sh
-curl -H "Content-Type: application/json" \
-  -d '{"id":"<ID>", "money": 20}' \
-  http://localhost:8000/withdraw
+curl http://localhost:8000/transactions\
+  -H "Content-Type: application/json" \
+  -d '{"from":"<ID>", "money": 20}'
+```
+
+transfer money from one account to another
+
+```sh
+curl http://localhost:8000/transactions\
+  -H "Content-Type: application/json" \
+  -d '{"from":"<ID>", "to":"<ID>", "money": 20}'
 ```
 
 Elasticsearch API
@@ -125,10 +133,6 @@ Delete index
 curl -X DELETE http://localhost:9200/balance
 ```
 
-## Balance Service
-
-On start up it will synchronise with the event store by calling `poller` service so it is important that the `poller` service is up and running.
-
 ### API
 
 List all
@@ -140,9 +144,3 @@ Rebuild Balance projection
 ```sh
 curl http://localhost:8030/balance/rebuild
 ```
-
-### Observations
-
-To be able to able to rebuild a projection, each projection will only be running in one instance. When a projection needs to be rebuild, a notification will be sent to the MQ. The projection that the notification refers to, will stop and will replay all the events, by requesting them to the event store.
-
-Since the poller still keeps producing messages, when need to make sure that we don't lose messages when we switch to listening to messages from the MQ. For that, when all the events from the ES for the projection are all processed, we will ask the MQ for the last message, process once more the events from the last event of the replay, process them and then switch to the MQ. Since the projectors are idempotent it will be ok.
