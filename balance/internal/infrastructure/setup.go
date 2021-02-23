@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/elastic/go-elasticsearch/v7"
+	"github.com/elastic/go-elasticsearch/v7/esapi"
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
@@ -34,9 +35,9 @@ const (
 )
 
 type Config struct {
-	ApiPort          int      `env:"API_PORT" envDefault:"8030"`
-	ElasticAddresses []string `env:"ELASTIC_ADDRESSES" envSeparator:","`
-	Partitions       uint32   `env:"PARTITIONS"`
+	ApiPort    int      `env:"API_PORT" envDefault:"8030"`
+	ElasticURL []string `env:"ELASTIC_URL" envSeparator:","`
+	Partitions uint32   `env:"PARTITIONS"`
 	ConfigEs
 	ConfigRedis
 	ConfigNats
@@ -48,32 +49,26 @@ type ConfigEs struct {
 }
 
 type ConfigRedis struct {
-	ConsulAddress string        `env:"CONSUL_ADDRESS"`
-	LockExpiry    time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
+	ConsulURL  string        `env:"CONSUL_URL"`
+	LockExpiry time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
 }
 
 type ConfigNats struct {
-	NatsAddress  string `env:"NATS_ADDRESS" envDefault:"localhost:4222"`
+	NatsURL      string `env:"NATS_URL" envDefault:"localhost:4222"`
 	Topic        string `env:"TOPIC" envDefault:"accounts"`
 	Subscription string `env:"SUBSCRIPTION" envDefault:"accounts-subscription"`
 }
 
 func Setup(cfg Config) {
 	escfg := elasticsearch.Config{
-		Addresses: cfg.ElasticAddresses,
+		Addresses: cfg.ElasticURL,
 	}
 	es, err := elasticsearch.NewClient(escfg)
 	if err != nil {
 		log.Fatalf("Error creating the client: %s", err)
 	}
 
-	res, err := es.Info()
-	if err != nil {
-		log.Fatalf("Error getting response: %s", err)
-	}
-
-	defer res.Body.Close()
-	log.Println("Elasticsearch info: ", res)
+	waitForElastic(es)
 
 	repo := gateway.NewBalanceRepository(es)
 
@@ -81,22 +76,22 @@ func Setup(cfg Config) {
 	// es player
 	esRepo := player.NewGrpcRepository(cfg.EsAddress)
 
-	natsNotifier, err := subscriber.NewNatsProjectionSubscriber(ctx, cfg.NatsAddress, NotificationTopic)
+	natsNotifier, err := subscriber.NewNatsProjectionSubscriber(ctx, cfg.NatsURL, NotificationTopic)
 	if err != nil {
 		log.Fatalf("Error creating NATS subscriber: %s", err)
 	}
 
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
-	pool, err := locks.NewConsulLockPool(cfg.ConsulAddress)
+	pool, err := locks.NewConsulLockPool(cfg.ConsulURL)
 	if err != nil {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 
-	streamResumer, err := resumestore.NewElasticSearchStreamResumer(cfg.ElasticAddresses, "stream_resume")
+	streamResumer, err := resumestore.NewElasticSearchStreamResumer(cfg.ElasticURL, "stream_resume")
 	if err != nil {
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
-	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", "balance-"+uuid.New().String(), streamResumer)
+	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsURL, "test-cluster", "balance-"+uuid.New().String(), streamResumer)
 	if err != nil {
 		log.Fatalf("Error creating NATS subscriber: %s", err)
 	}
@@ -154,7 +149,7 @@ func Setup(cfg Config) {
 		)
 	}
 
-	memberlist, err := worker.NewConsulMemberList(cfg.ConsulAddress, "balance-member", cfg.LockExpiry)
+	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "balance-member", cfg.LockExpiry)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -173,6 +168,27 @@ func Setup(cfg Config) {
 	time.Sleep(3 * time.Second)
 }
 
+func waitForElastic(es *elasticsearch.Client) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	var err error
+	var res *esapi.Response
+	for i := 0; i < 5; i++ {
+		res, err = es.Info()
+		if err != nil {
+			log.Printf("Unable to get info elasticsearch about: %v", err)
+			<-ticker.C
+		}
+	}
+
+	if err != nil {
+		log.Fatalf("Error getting response: %s", err)
+	}
+	defer res.Body.Close()
+	log.Println("Elasticsearch info: ", res)
+}
+
 func startRestServer(ctx context.Context, c controller.RestController, port int) {
 	// Echo instance
 	e := echo.New()
@@ -182,8 +198,10 @@ func startRestServer(ctx context.Context, c controller.RestController, port int)
 	e.Use(middleware.Recover())
 
 	// Routes
-	e.GET("/", c.ListAll)
-	e.GET("/balance/rebuild", c.RebuildBalance)
+	e.GET("/", c.Ping)
+	e.GET("/balance/:id", c.GetOne)
+	e.GET("/balance/", c.ListAll)
+	e.GET("/rebuild/balance", c.RebuildBalance)
 
 	go func() {
 		<-ctx.Done()

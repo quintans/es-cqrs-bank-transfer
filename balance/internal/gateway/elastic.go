@@ -3,7 +3,6 @@ package gateway
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -54,12 +53,12 @@ func (b BalanceRepository) GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.
 	}
 	res, err := req.Do(ctx, b.client)
 	if err != nil {
-		return []entity.Balance{}, fmt.Errorf("Error getting response for SearchRequest: %w", err)
+		return []entity.Balance{}, faults.Errorf("Error getting response for SearchRequest: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return nil, fmt.Errorf("[%s] Error GetAllOrderByOwnerAsc", res.Status())
+		return nil, faults.Errorf("[%s] Error GetAllOrderByOwnerAsc", res.Status())
 	}
 
 	balances := responseToBalances(res)
@@ -130,12 +129,12 @@ func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
 	}
 	res, err := req.Do(ctx, b.client)
 	if err != nil {
-		return "", fmt.Errorf("Error getting response for SearchRequest: %w", err)
+		return "", faults.Errorf("Error getting response for SearchRequest: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return "", fmt.Errorf("[%s] Error GetMaxEventID", res.Status())
+		return "", faults.Errorf("[%s] Error GetMaxEventID", res.Status())
 	}
 
 	balances := responseToBalances(res)
@@ -165,12 +164,12 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 
 	res, err := req.Do(ctx, b.client)
 	if err != nil {
-		return fmt.Errorf("Error getting response for IndexRequest: %w", err)
+		return faults.Errorf("Error getting response for IndexRequest: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return fmt.Errorf("[%s] Error CreatAccount document ID=%s", res.Status(), docID)
+		return faults.Errorf("[%s] Error CreatAccount document ID=%s", res.Status(), docID)
 	}
 	return nil
 }

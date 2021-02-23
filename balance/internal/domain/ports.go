@@ -28,6 +28,7 @@ type ProjectionUsecase interface {
 }
 
 type BalanceUsecase interface {
+	GetOne(ctx context.Context, id string) (entity.Balance, error)
 	ListAll(ctx context.Context) ([]entity.Balance, error)
 	RebuildBalance(ctx context.Context, after time.Time) error
 }

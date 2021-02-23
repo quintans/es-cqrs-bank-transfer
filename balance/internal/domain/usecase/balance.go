@@ -39,6 +39,10 @@ func NewBalanceUsecase(
 	}
 }
 
+func (b BalanceUsecase) GetOne(ctx context.Context, id string) (entity.Balance, error) {
+	return b.balanceRepository.GetByID(ctx, id)
+}
+
 func (b BalanceUsecase) ListAll(ctx context.Context) ([]entity.Balance, error) {
 	return b.balanceRepository.GetAllOrderByOwnerAsc(ctx)
 }

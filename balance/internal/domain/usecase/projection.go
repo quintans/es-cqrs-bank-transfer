@@ -3,11 +3,11 @@ package usecase
 import (
 	"context"
 	"errors"
-	"fmt"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
+	"github.com/quintans/faults"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
 )
@@ -59,7 +59,7 @@ func (b ProjectionUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata
 	}
 	agg, err := b.balanceRepository.GetByID(ctx, m.AggregateID)
 	if agg.IsZero() {
-		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
+		return faults.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
 	update := entity.Balance{
 		ID:      agg.ID,
@@ -80,7 +80,7 @@ func (b ProjectionUsecase) MoneyWithdrawn(ctx context.Context, m domain.Metadata
 	}
 	agg, err := b.balanceRepository.GetByID(ctx, m.AggregateID)
 	if agg.IsZero() {
-		return fmt.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
+		return faults.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
 	update := entity.Balance{
 		ID:      agg.ID,
@@ -109,7 +109,7 @@ func (b ProjectionUsecase) GetLastEventID(ctx context.Context) (string, error) {
 	// get the latest event ID from the eventstore
 	eventID, err := b.balanceRepository.GetMaxEventID(ctx)
 	if err != nil {
-		return "", fmt.Errorf("Could not get last event ID: %w", err)
+		return "", faults.Errorf("Could not get last event ID: %w", err)
 	}
 
 	return eventID, nil
