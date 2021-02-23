@@ -20,6 +20,10 @@ func NewRestController(accountUc domain.AccountUsecaser, txUC domain.Transaction
 	}
 }
 
+func (ctl RestController) Ping(c echo.Context) error {
+	return c.String(http.StatusOK, "ready to server")
+}
+
 // Create calls the usecase to crete a new account
 func (ctl RestController) Create(c echo.Context) error {
 	cmd := domain.CreateAccountCommand{}

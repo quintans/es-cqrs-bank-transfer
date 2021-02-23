@@ -35,13 +35,14 @@ import (
 )
 
 type Config struct {
+	DBMigrationsURL   string `env:"DB_MIGRATIONS_URL" envDefault:"file:///migrations"`
 	ApiPort           int    `env:"API_PORT" envDefault:"8000"`
 	SnapshotThreshold uint32 `env:"SNAPSHOT_THRESHOLD" envDefault:"50"`
 	GrpcAddress       string `env:"ES_GRPC_ADDRESS" envDefault:":3000"`
 
-	ConsulAddress string        `env:"CONSUL_ADDRESS"`
-	LockExpiry    time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
-	NatsAddress   string        `env:"NATS_ADDRESS"`
+	ConsulURL  string        `env:"CONSUL_URL"`
+	LockExpiry time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
+	NatsURL    string        `env:"NATS_URL"`
 
 	Partitions uint32 `env:"PARTITIONS"`
 	Topic      string `env:"TOPIC" envDefault:"accounts"`
@@ -55,34 +56,33 @@ type ConfigForwarder struct {
 }
 
 type ConfigEs struct {
+	EsHost     string `env:"ES_HOST" envDefault:"localhost"`
+	EsPort     int    `env:"ES_PORT" envDefault:"27017"`
 	EsUser     string `env:"ES_USER" envDefault:"root"`
 	EsPassword string `env:"ES_PASSWORD" envDefault:"password"`
-	EsHost     string `env:"ES_HOST"`
-	EsPort     int    `env:"ES_PORT" envDefault:"27017"`
 	EsName     string `env:"ES_NAME" envDefault:"accounts"`
 }
 
 func Setup(cfg *Config) {
-	dbURL := fmt.Sprintf("mongodb://%s:%d/%s?replicaSet=rs0", cfg.EsHost, cfg.EsPort, cfg.EsName)
-	err := migration(dbURL)
+	log.Info("doing migration")
+	connStr := fmt.Sprintf("mongodb://%s:%d/%s?replicaSet=rs0", cfg.EsHost, cfg.EsPort, cfg.EsName)
+	err := migration(connStr, cfg.DBMigrationsURL)
 	if err != nil {
 		log.Fatal(err)
 	}
-	client, err := newDB(dbURL)
+
+	// evenstore
+	esRepo, err := mongodb.NewStore(connStr, cfg.EsName)
 	if err != nil {
 		log.Fatal(err)
 	}
-	defer client.Disconnect(context.Background())
+	es := eventstore.NewEventStore(esRepo, cfg.SnapshotThreshold, entity.AggregateFactory{})
 
 	ctx := context.Background()
 
-	// evenstore
-	esRepo := mongodb.NewStoreDB(client, cfg.EsName)
-	es := eventstore.NewEventStore(esRepo, cfg.SnapshotThreshold, entity.AggregateFactory{}, event.EventFactory{})
-
 	go player.StartGrpcServer(ctx, cfg.GrpcAddress, esRepo)
 
-	pool, err := locks.NewConsulLockPool(cfg.ConsulAddress)
+	pool, err := locks.NewConsulLockPool(cfg.ConsulURL)
 	if err != nil {
 		log.Fatalf("Error instantiating Locker: %v", err)
 	}
@@ -100,11 +100,11 @@ func Setup(cfg *Config) {
 	c := controller.NewRestController(accUC, txUC)
 
 	// event forwarding
-	workers := startEventForwarder(ctx, client, pool, cfg)
+	workers := startEventForwarder(ctx, connStr, cfg.EsName, pool, cfg)
 
-	workers = append(workers, startTransactionConsumers(ctx, pool, dbURL, cfg, reactor.Handler)...)
+	workers = append(workers, startTransactionConsumers(ctx, pool, connStr, cfg, reactor.Handler)...)
 
-	memberlist, err := worker.NewConsulMemberList(cfg.ConsulAddress, "forwarder-member", cfg.LockExpiry)
+	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "forwarder-member", cfg.LockExpiry)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -114,7 +114,7 @@ func Setup(cfg *Config) {
 	startRestServer(c, cfg.ApiPort)
 }
 
-func startEventForwarder(ctx context.Context, client *mongo.Client, lockPool locks.ConsulLockPool, cfg *Config) []worker.Worker {
+func startEventForwarder(ctx context.Context, connStr, database string, lockPool locks.ConsulLockPool, cfg *Config) []worker.Worker {
 	partitionSlots, err := worker.ParseSlots(cfg.Forwarder.PartitionSlots)
 	if err != nil {
 		log.Fatal(err)
@@ -127,14 +127,14 @@ func startEventForwarder(ctx context.Context, client *mongo.Client, lockPool loc
 	}
 
 	clientID := "forwarder-id-" + uuid.New().String()
-	sinker, err := sink.NewNatsSink(cfg.Topic, partitions, "test-cluster", clientID, stan.NatsURL(cfg.NatsAddress))
+	sinker, err := sink.NewNatsSink(cfg.Topic, partitions, "test-cluster", clientID, stan.NatsURL(cfg.NatsURL))
 	if err != nil {
-		log.Fatalf("Error initialising Sink '%s' on boot: %w", clientID, err)
+		log.Fatalf("Error initialising NATS (%s) Sink '%s' on boot: %v", cfg.NatsURL, clientID, err)
 	}
 
 	workers := make([]worker.Worker, len(partitionSlots))
 	for i, v := range partitionSlots {
-		listener, err := mongodb.NewFeedDB(client, cfg.EsName, mongodb.WithPartitions(partitions, v.From, v.To))
+		listener, err := mongodb.NewFeed(connStr, database, mongodb.WithPartitions(partitions, v.From, v.To))
 		if err != nil {
 			log.Fatalf("Error instantiating store listener: %v", err)
 		}
@@ -159,7 +159,7 @@ func startTransactionConsumers(ctx context.Context, lockPool locks.ConsulLockPoo
 		log.Fatal("Error instantiating Locker: %v", err)
 	}
 	streamName := "accounts-reactor"
-	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsAddress, "test-cluster", streamName+"-"+uuid.New().String(), streamResumer)
+	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsURL, "test-cluster", streamName+"-"+uuid.New().String(), streamResumer)
 	if err != nil {
 		log.Fatalf("Error creating NATS subscriber: %s", err)
 	}
@@ -205,6 +205,7 @@ func startRestServer(c controller.RestController, port int) {
 	e.Use(middleware.Recover())
 
 	// Routes
+	e.GET("/", c.Ping)
 	e.POST("/accounts", c.Create)
 	e.POST("/transactions", c.Transaction)
 	e.GET("/accounts/:id", c.Balance)
@@ -215,17 +216,23 @@ func startRestServer(c controller.RestController, port int) {
 }
 
 func newDB(dbURL string) (*mongo.Client, error) {
-	ctx, _ := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 	opts := options.Client().ApplyURI(dbURL)
 	client, err := mongo.Connect(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 
+	err = client.Ping(ctx, nil)
+	if err != nil {
+		return nil, faults.Wrap(err)
+	}
+
 	return client, nil
 }
 
-func migration(dbURL string) error {
+func migration(dbURL string, sourceURL string) error {
 	p := &mg.Mongo{}
 	d, err := p.Open(dbURL)
 	if err != nil {
@@ -237,9 +244,10 @@ func migration(dbURL string) error {
 			log.Fatal(err)
 		}
 	}()
-	m, err := migrate.NewWithDatabaseInstance("file://../../migrations", "", d)
+
+	m, err := migrate.NewWithDatabaseInstance(sourceURL, "", d)
 	if err != nil {
-		return faults.Errorf("unable to find migration scripts: %w", err)
+		return faults.Errorf("unable to execute migration scripts: %w", err)
 	}
 	err = m.Up()
 	if err != nil && err != migrate.ErrNoChange {

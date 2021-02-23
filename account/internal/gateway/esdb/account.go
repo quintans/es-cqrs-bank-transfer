@@ -10,6 +10,8 @@ import (
 	"github.com/quintans/faults"
 )
 
+var accountType = (&entity.Account{}).GetType()
+
 type AccountRepository struct {
 	es eventstore.EventStore
 }
@@ -29,7 +31,7 @@ func (r AccountRepository) Get(ctx context.Context, id string) (*entity.Account,
 }
 
 func (r AccountRepository) Exec(ctx context.Context, id string, do func(*entity.Account) (*entity.Account, error), idempotencyKey string) error {
-	has, err := r.es.HasIdempotencyKey(ctx, id, idempotencyKey)
+	has, err := r.es.HasIdempotencyKey(ctx, accountType, idempotencyKey)
 	if has || err != nil {
 		return faults.Wrap(err)
 	}

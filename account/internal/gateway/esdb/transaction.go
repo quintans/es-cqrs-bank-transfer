@@ -7,6 +7,8 @@ import (
 	"github.com/quintans/eventstore"
 )
 
+var transactionType = (&entity.Transaction{}).GetType()
+
 type TransactionRepository struct {
 	es eventstore.EventStore
 }

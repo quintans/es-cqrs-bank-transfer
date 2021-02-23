@@ -59,7 +59,7 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 			})
 
 			return nil, err
-		}, e.ID)
+		}, e.ID+"_withdraw")
 		if err != nil {
 			return err
 		}
@@ -79,7 +79,7 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 			})
 
 			return nil, err
-		}, e.ID)
+		}, e.ID+"_deposit")
 		if err != nil {
 			return err
 		}
