@@ -11,6 +11,8 @@ services:
   #     # dockerfile: ./Dockerfile
   #   depends_on:
   #     - mongo
+  #     - nats
+  #     - consul
   #   environment:
   #     - ES_HOST=mongo
   #     - ES_NAME=accounts
@@ -19,6 +21,7 @@ services:
   #     - TOPIC=accounts
   #     - CONSUL_ADDRESS=consul:8500
   #     - PARTITION_SLOTS=1-2,3-4 # 4 partitions spread through 2 workers, 2 partitions each
+  #     - PARTITIONS=4
   #   networks:
   #     - my-network
   #   ports:
@@ -33,7 +36,6 @@ services:
   #     - nats
   #     - elastic
   #     - consul
-  #     - svc-forwarder
   #   environment:
   #     - NATS_ADDRESS=nats:4222
   #     - TOPIC=accounts
@@ -51,6 +53,8 @@ services:
     ports:
       - "4222:4222"
       - "8222:8222"
+    networks:
+      - my-network
 
   elastic:
     image: docker.elastic.co/elasticsearch/elasticsearch:7.8.0
@@ -101,7 +105,7 @@ services:
     environment:
       # MONGO_INITDB_ROOT_USERNAME: root
       # MONGO_INITDB_ROOT_PASSWORD: password
-      MONGO_INITDB_DATABASE: account
+      MONGO_INITDB_DATABASE: accounts
       MONGO_REPLICA_SET_NAME: rs0
     expose:
       - 27017
@@ -117,7 +121,7 @@ services:
     depends_on:
       - M1
     volumes:
-      - ./e2e/scripts:/scripts
+      - ./scripts:/scripts
     restart: "no"
     entrypoint: [ "bash", "/scripts/mongo_setup.sh" ]
 

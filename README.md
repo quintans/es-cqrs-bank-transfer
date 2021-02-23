@@ -133,14 +133,19 @@ Delete index
 curl -X DELETE http://localhost:9200/balance
 ```
 
-### API
+### Balance API
+
+Get one
+```sh
+curl http://localhost:8030/balance/{id}
+```
 
 List all
 ```sh
-curl http://localhost:8030/
+curl http://localhost:8030/balance
 ```
 
 Rebuild Balance projection
 ```sh
-curl http://localhost:8030/balance/rebuild
+curl http://localhost:8030/rebuild/balance
 ```
