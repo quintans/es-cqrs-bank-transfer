@@ -7,7 +7,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
-	"github.com/quintans/eventstore/common"
+	"github.com/quintans/eventstore/eventid"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
 	"github.com/quintans/eventstore/store"
@@ -57,7 +57,7 @@ func (b BalanceUsecase) RebuildBalance(ctx context.Context, after time.Time) err
 	return b.restarter.Rebuild(ctx, domain.ProjectionBalance, int(b.listenerCount),
 		func(ctx context.Context) (string, error) {
 			if !after.IsZero() {
-				return common.NewEventID(after, "", 0), nil
+				return eventid.NewEventID(after, "", 0), nil
 			}
 
 			logger.Info("Cleaning all balance data")

@@ -20,6 +20,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
 	"github.com/quintans/eventstore"
 	"github.com/quintans/eventstore/common"
+	"github.com/quintans/eventstore/log"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
 	"github.com/quintans/eventstore/projection/resumestore"
@@ -27,11 +28,15 @@ import (
 	"github.com/quintans/eventstore/worker"
 	"github.com/quintans/faults"
 	"github.com/quintans/toolkit/locks"
-	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus"
 )
 
 const (
 	NotificationTopic = "notifications"
+)
+
+var (
+	logger = log.NewLogrus(logrus.StandardLogger())
 )
 
 type Config struct {
@@ -65,7 +70,7 @@ func Setup(cfg Config) {
 	}
 	es, err := elasticsearch.NewClient(escfg)
 	if err != nil {
-		log.Fatalf("Error creating the client: %s", err)
+		logger.Fatalf("Error creating the client: %s", err)
 	}
 
 	waitForElastic(es)
@@ -76,29 +81,30 @@ func Setup(cfg Config) {
 	// es player
 	esRepo := player.NewGrpcRepository(cfg.EsAddress)
 
-	natsNotifier, err := subscriber.NewNatsProjectionSubscriber(ctx, cfg.NatsURL, NotificationTopic)
+	natsNotifier, err := subscriber.NewNatsProjectionSubscriber(ctx, logger, cfg.NatsURL, NotificationTopic)
 	if err != nil {
-		log.Fatalf("Error creating NATS subscriber: %s", err)
+		logger.Fatalf("Error creating NATS subscriber: %s", err)
 	}
 
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
 	pool, err := locks.NewConsulLockPool(cfg.ConsulURL)
 	if err != nil {
-		log.Fatal("Error instantiating Locker: %v", err)
+		logger.Fatal("Error instantiating Locker: %v", err)
 	}
 
 	streamResumer, err := resumestore.NewElasticSearchStreamResumer(cfg.ElasticURL, "stream_resume")
 	if err != nil {
-		log.Fatal("Error instantiating Locker: %v", err)
+		logger.Fatal("Error instantiating Locker: %v", err)
 	}
-	natsSub, err := subscriber.NewNatsSubscriber(ctx, cfg.NatsURL, "test-cluster", "balance-"+uuid.New().String(), streamResumer)
+	natsSub, err := subscriber.NewNatsSubscriber(ctx, logger, cfg.NatsURL, "test-cluster", "balance-"+uuid.New().String(), streamResumer)
 	if err != nil {
-		log.Fatalf("Error creating NATS subscriber: %s", err)
+		logger.Fatalf("Error creating NATS subscriber: %s", err)
 	}
 
 	tokenStreams := []projection.StreamResume{}
 	unlockWaiter := pool.NewLock("balance-freeze", cfg.LockExpiry)
 	restarter := projection.NewNotifierLockRestarter(
+		logger,
 		unlockWaiter,
 		natsNotifier,
 		func(ctx context.Context) error {
@@ -132,6 +138,7 @@ func Setup(cfg Config) {
 		}
 		tokenStreams = append(tokenStreams, resume)
 		runner := projection.NewProjectionPartition(
+			logger,
 			unlockWaiter,
 			natsNotifier,
 			natsSub,
@@ -143,6 +150,7 @@ func Setup(cfg Config) {
 			prjCtrl.Handle,
 		)
 		workers[i-1] = worker.NewRunWorker(
+			logger,
 			"balance-projection-"+idx,
 			pool.NewLock("balance-lock-"+idx, cfg.LockExpiry),
 			runner,
@@ -151,9 +159,9 @@ func Setup(cfg Config) {
 
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "balance-member", cfg.LockExpiry)
 	if err != nil {
-		log.Fatal(err)
+		logger.Fatal(err)
 	}
-	go worker.BalanceWorkers(ctx, memberlist, workers, cfg.LockExpiry/2)
+	go worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,
@@ -177,16 +185,16 @@ func waitForElastic(es *elasticsearch.Client) {
 	for i := 0; i < 5; i++ {
 		res, err = es.Info()
 		if err != nil {
-			log.Printf("Unable to get info elasticsearch about: %v", err)
+			logger.Infof("Unable to get info elasticsearch about: %v", err)
 			<-ticker.C
 		}
 	}
 
 	if err != nil {
-		log.Fatalf("Error getting response: %s", err)
+		logger.Fatalf("Error getting response: %s", err)
 	}
 	defer res.Body.Close()
-	log.Println("Elasticsearch info: ", res)
+	logger.Info("Elasticsearch info: ", res)
 }
 
 func startRestServer(ctx context.Context, c controller.RestController, port int) {
@@ -215,6 +223,6 @@ func startRestServer(ctx context.Context, c controller.RestController, port int)
 	// Start server
 	address := fmt.Sprintf(":%d", port)
 	if err := e.Start(address); err != nil {
-		log.Info("shutting down the server")
+		logger.Info("shutting down the server")
 	}
 }
