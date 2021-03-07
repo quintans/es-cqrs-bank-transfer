@@ -6,22 +6,24 @@ import (
 	"github.com/google/uuid"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
-	log "github.com/sirupsen/logrus"
+	"github.com/quintans/eventstore/log"
 )
 
 type AccountUsecase struct {
-	repo domain.AccountRepository
+	logger log.Logger
+	repo   domain.AccountRepository
 }
 
-func NewAccountUsecase(repo domain.AccountRepository) AccountUsecase {
+func NewAccountUsecase(logger log.Logger, repo domain.AccountRepository) AccountUsecase {
 	return AccountUsecase{
-		repo: repo,
+		logger: logger,
+		repo:   repo,
 	}
 }
 
 func (uc AccountUsecase) Create(ctx context.Context, createAccount domain.CreateAccountCommand) (string, error) {
 	id := uuid.New().String()
-	log.WithFields(log.Fields{
+	uc.logger.WithTags(log.Tags{
 		"method": "AccountUsecase.Create",
 	}).Infof("Creating account with owner:%s, id: %s", createAccount.Owner, id)
 

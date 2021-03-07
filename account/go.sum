@@ -503,6 +503,8 @@ github.com/quintans/faults v1.1.0 h1:Iojy3aCZr6XIDLwf+zrRIyrcM477pkgVB3qfZPvwK3U
 github.com/quintans/faults v1.1.0/go.mod h1:80oBnKF99u+YGV5OYiaFUZnc1/03LHm5H+8gOyqpZUw=
 github.com/quintans/goSQL v0.0.0-20171112122952-e93145e9919d/go.mod h1:MkrXLc68zRc6X1w5FRMsbOxoAJQFQjk2Smpuhv+Po9E=
 github.com/quintans/goSQL v1.3.0/go.mod h1:P08UBv1bDcutt2DwddZd3M3eXI+z9+VoNLH1neKn/8E=
+github.com/quintans/picodi v1.5.0 h1:ZEtFweuxh6fExZL7OVoNwwmjANFbqQQRpp3jOPPMrCQ=
+github.com/quintans/picodi v1.5.0/go.mod h1:7UbtBF6qZv3OSVsDg3yDjaIcA23fY57kgxY1SybKGss=
 github.com/quintans/toolkit v0.0.0-20191116152115-d7982be7971f/go.mod h1:PpTakdDnp2jAKvAcnpWCEUg6RsDAdB3mK3jxUvXn1WM=
 github.com/quintans/toolkit v0.1.1 h1:otCMZ2CwaRm9Nc8S8hM0uuZnVRj7oo/d78nvS9R2erI=
 github.com/quintans/toolkit v0.1.1/go.mod h1:rIPfDUpWP4aaTiAxMih751CIgCsk0PFiCXJQeNptDyo=

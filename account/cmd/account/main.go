@@ -6,7 +6,8 @@ import (
 	"github.com/caarlos0/env/v6"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/infrastructure"
-	log "github.com/sirupsen/logrus"
+	"github.com/quintans/eventstore/log"
+	"github.com/sirupsen/logrus"
 )
 
 func init() {
@@ -16,15 +17,15 @@ func init() {
 		lvl = "debug"
 	}
 	// parse string, this is built-in feature of logrus
-	ll, err := log.ParseLevel(lvl)
+	ll, err := logrus.ParseLevel(lvl)
 	if err != nil {
-		ll = log.DebugLevel
+		ll = logrus.DebugLevel
 	}
 	// set global log level
-	log.SetLevel(ll)
+	logrus.SetLevel(ll)
 
-	log.SetOutput(os.Stdout)
-	log.SetFormatter(&log.TextFormatter{
+	logrus.SetOutput(os.Stdout)
+	logrus.SetFormatter(&logrus.TextFormatter{
 		DisableQuote: true,
 	})
 }
@@ -33,8 +34,9 @@ func main() {
 	cfg := &infrastructure.Config{}
 	err := env.Parse(cfg)
 	if err != nil {
-		log.Fatal(err)
+		logrus.Fatal(err)
 	}
 
-	infrastructure.Setup(cfg)
+	logger := log.NewLogrus(logrus.StandardLogger())
+	infrastructure.Setup(cfg, logger)
 }

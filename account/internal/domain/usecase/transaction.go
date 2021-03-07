@@ -7,19 +7,22 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
-	log "github.com/sirupsen/logrus"
+	"github.com/quintans/eventstore/log"
 )
 
 type TransactionUsecase struct {
+	logger  log.Logger
 	txRepo  domain.TransactionRepository
 	accRepo domain.AccountRepository
 }
 
 func NewTransactionUsecase(
+	logger log.Logger,
 	txRepo domain.TransactionRepository,
 	accRepo domain.AccountRepository,
 ) TransactionUsecase {
 	return TransactionUsecase{
+		logger:  logger,
 		txRepo:  txRepo,
 		accRepo: accRepo,
 	}
@@ -27,7 +30,7 @@ func NewTransactionUsecase(
 
 func (uc TransactionUsecase) Create(ctx context.Context, cmd domain.CreateTransactionCommand) (string, error) {
 	id := uuid.New().String()
-	log.WithFields(log.Fields{
+	uc.logger.WithTags(log.Tags{
 		"method": "TransactionUsecase.Create",
 	}).Infof("Creating transaction %s from: %s, to: %s, money: %d", id, cmd.From, cmd.To, cmd.Money)
 
@@ -40,7 +43,7 @@ func (uc TransactionUsecase) Create(ctx context.Context, cmd domain.CreateTransa
 }
 
 func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.TransactionCreated) error {
-	logger := log.WithFields(log.Fields{
+	logger := uc.logger.WithTags(log.Tags{
 		"method": "TransactionUsecase.transactionCreated",
 	})
 

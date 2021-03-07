@@ -30,13 +30,8 @@ import (
 	"github.com/quintans/eventstore/worker"
 	"github.com/quintans/faults"
 	"github.com/quintans/toolkit/locks"
-	"github.com/sirupsen/logrus"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
-)
-
-var (
-	logger = log.NewLogrus(logrus.StandardLogger())
 )
 
 type Config struct {
@@ -68,10 +63,10 @@ type ConfigEs struct {
 	EsName     string `env:"ES_NAME" envDefault:"accounts"`
 }
 
-func Setup(cfg *Config) {
+func Setup(cfg *Config, logger log.Logger) {
 	logger.Info("doing migration")
 	connStr := fmt.Sprintf("mongodb://%s:%d/%s?replicaSet=rs0", cfg.EsHost, cfg.EsPort, cfg.EsName)
-	err := migration(connStr, cfg.DBMigrationsURL)
+	err := migration(logger, connStr, cfg.DBMigrationsURL)
 	if err != nil {
 		logger.Fatal(err)
 	}
@@ -85,8 +80,6 @@ func Setup(cfg *Config) {
 
 	ctx := context.Background()
 
-	go player.StartGrpcServer(ctx, cfg.GrpcAddress, esRepo)
-
 	pool, err := locks.NewConsulLockPool(cfg.ConsulURL)
 	if err != nil {
 		logger.Fatalf("Error instantiating Locker: %v", err)
@@ -96,30 +89,31 @@ func Setup(cfg *Config) {
 	accRepo := esdb.NewAccountRepository(es)
 
 	// Usecases
-	accUC := usecase.NewAccountUsecase(accRepo)
+	accUC := usecase.NewAccountUsecase(logger, accRepo)
 
 	txRepo := esdb.NewTransactionRepository(es)
-	txUC := usecase.NewTransactionUsecase(txRepo, accRepo)
-	reactor := controller.NewListener(txUC, event.EventFactory{}, eventstore.JSONCodec{})
+	txUC := usecase.NewTransactionUsecase(logger, txRepo, accRepo)
+	reactor := controller.NewListener(logger, txUC, event.EventFactory{}, eventstore.JSONCodec{})
 
 	c := controller.NewRestController(accUC, txUC)
 
 	// event forwarding
-	workers := startEventForwarder(ctx, connStr, cfg.EsName, pool, cfg)
+	workers := startEventForwarder(ctx, logger, connStr, cfg.EsName, pool, cfg)
 
-	workers = append(workers, startTransactionConsumers(ctx, pool, connStr, cfg, reactor.Handler)...)
+	workers = append(workers, startTransactionConsumers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
 
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "forwarder-member", cfg.LockExpiry)
 	if err != nil {
 		logger.Fatal(err)
 	}
-	go worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
 
+	go player.StartGrpcServer(ctx, cfg.GrpcAddress, esRepo)
+	go worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
 	// Rest server
 	startRestServer(c, cfg.ApiPort)
 }
 
-func startEventForwarder(ctx context.Context, connStr, database string, lockPool locks.ConsulLockPool, cfg *Config) []worker.Worker {
+func startEventForwarder(ctx context.Context, logger log.Logger, connStr, database string, lockPool locks.ConsulLockPool, cfg *Config) []worker.Worker {
 	partitionSlots, err := worker.ParseSlots(cfg.Forwarder.PartitionSlots)
 	if err != nil {
 		logger.Fatal(err)
@@ -160,7 +154,7 @@ func startEventForwarder(ctx context.Context, connStr, database string, lockPool
 	return workers
 }
 
-func startTransactionConsumers(ctx context.Context, lockPool locks.ConsulLockPool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
+func startTransactionConsumers(ctx context.Context, logger log.Logger, lockPool locks.ConsulLockPool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
 	streamResumer, err := resumestore.NewMongoDBStreamResumer(dbURL, cfg.EsName, "stream_resume")
 	if err != nil {
 		logger.Fatal("Error instantiating Locker: %v", err)
@@ -240,7 +234,7 @@ func newDB(dbURL string) (*mongo.Client, error) {
 	return client, nil
 }
 
-func migration(dbURL string, sourceURL string) error {
+func migration(logger log.Logger, dbURL string, sourceURL string) error {
 	p := &mg.Mongo{}
 	d, err := p.Open(dbURL)
 	if err != nil {
