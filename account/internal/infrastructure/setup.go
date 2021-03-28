@@ -12,13 +12,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/nats-io/stan.go"
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller"
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/usecase"
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/gateway/esdb"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/eventstore"
 	"github.com/quintans/eventstore/common"
+	"github.com/quintans/eventstore/lock"
 	"github.com/quintans/eventstore/log"
 	"github.com/quintans/eventstore/player"
 	"github.com/quintans/eventstore/projection"
@@ -29,9 +25,14 @@ import (
 	"github.com/quintans/eventstore/subscriber"
 	"github.com/quintans/eventstore/worker"
 	"github.com/quintans/faults"
-	"github.com/quintans/toolkit/locks"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/usecase"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/gateway/esdb"
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
 
 type Config struct {
@@ -80,9 +81,9 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	ctx := context.Background()
 
-	pool, err := locks.NewConsulLockPool(cfg.ConsulURL)
+	pool, err := lock.NewConsulLockPool(cfg.ConsulURL)
 	if err != nil {
-		logger.Fatalf("Error instantiating Locker: %v", err)
+		logger.Fatalf("Error instantiating Locker: %+v", err)
 	}
 
 	// Repository
@@ -98,7 +99,7 @@ func Setup(cfg *Config, logger log.Logger) {
 	c := controller.NewRestController(accUC, txUC)
 
 	// event forwarding
-	workers := startEventForwarder(ctx, logger, connStr, cfg.EsName, pool, cfg)
+	workers := startEventForwarder(ctx, logger, connStr, pool, cfg)
 
 	workers = append(workers, startTransactionConsumers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
 
@@ -113,7 +114,15 @@ func Setup(cfg *Config, logger log.Logger) {
 	startRestServer(c, cfg.ApiPort)
 }
 
-func startEventForwarder(ctx context.Context, logger log.Logger, connStr, database string, lockPool locks.ConsulLockPool, cfg *Config) []worker.Worker {
+type LockerFactory interface {
+	NewLock(lockName string, expiry time.Duration) worker.Locker
+}
+
+type EventForwarder struct {
+	LockFactory LockerFactory `wire:""`
+}
+
+func startEventForwarder(ctx context.Context, logger log.Logger, connStr string, lockPool lock.ConsulLockPool, cfg *Config) []worker.Worker {
 	partitionSlots, err := worker.ParseSlots(cfg.Forwarder.PartitionSlots)
 	if err != nil {
 		logger.Fatal(err)
@@ -125,18 +134,22 @@ func startEventForwarder(ctx context.Context, logger log.Logger, connStr, databa
 		}
 	}
 
+	// sinker provider
 	clientID := "forwarder-id-" + uuid.New().String()
 	sinker, err := sink.NewNatsSink(logger, cfg.Topic, partitions, "test-cluster", clientID, stan.NatsURL(cfg.NatsURL))
 	if err != nil {
-		logger.Fatalf("Error initialising NATS (%s) Sink '%s' on boot: %v", cfg.NatsURL, clientID, err)
+		logger.Fatalf("Error initialising NATS (%s) Sink '%s' on boot: %+v", cfg.NatsURL, clientID, err)
 	}
+	go func() {
+		<-ctx.Done()
+		sinker.Close()
+	}()
 
 	workers := make([]worker.Worker, len(partitionSlots))
 	for i, v := range partitionSlots {
-		listener, err := mongodb.NewFeed(logger, connStr, database, mongodb.WithPartitions(partitions, v.From, v.To))
-		if err != nil {
-			logger.Fatalf("Error instantiating store listener: %v", err)
-		}
+
+		// feed provider
+		listener := mongodb.NewFeed(logger, connStr, cfg.EsName, mongodb.WithPartitions(partitions, v.From, v.To))
 
 		slots := fmt.Sprintf("%d-%d", v.From, v.To)
 		workers[i] = worker.NewRunWorker(
@@ -154,15 +167,15 @@ func startEventForwarder(ctx context.Context, logger log.Logger, connStr, databa
 	return workers
 }
 
-func startTransactionConsumers(ctx context.Context, logger log.Logger, lockPool locks.ConsulLockPool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
+func startTransactionConsumers(ctx context.Context, logger log.Logger, lockPool lock.ConsulLockPool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
 	streamResumer, err := resumestore.NewMongoDBStreamResumer(dbURL, cfg.EsName, "stream_resume")
 	if err != nil {
-		logger.Fatal("Error instantiating Locker: %v", err)
+		logger.Fatal("Error instantiating Locker: %+v", err)
 	}
 	streamName := "accounts-reactor"
 	natsSub, err := subscriber.NewNatsSubscriber(ctx, logger, cfg.NatsURL, "test-cluster", streamName+"-"+uuid.New().String(), streamResumer)
 	if err != nil {
-		logger.Fatalf("Error creating NATS subscriber: %s", err)
+		logger.Fatalf("Error creating NATS subscriber: %+v", err)
 	}
 
 	workers := make([]worker.Worker, cfg.Partitions)
