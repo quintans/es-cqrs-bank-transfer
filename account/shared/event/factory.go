@@ -1,14 +1,14 @@
 package event
 
 import (
-	"github.com/quintans/eventstore"
+	"github.com/quintans/eventsourcing"
 	"github.com/quintans/faults"
 )
 
 type EventFactory struct{}
 
-func (EventFactory) New(kind string) (eventstore.Typer, error) {
-	var e eventstore.Typer
+func (EventFactory) New(kind string) (eventsourcing.Typer, error) {
+	var e eventsourcing.Typer
 	switch kind {
 	case Event_AccountCreated:
 		e = &AccountCreated{}

@@ -3,8 +3,9 @@ package entity
 import (
 	"errors"
 
+	"github.com/quintans/eventsourcing"
+
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
-	"github.com/quintans/eventstore"
 )
 
 var (
@@ -13,7 +14,7 @@ var (
 )
 
 type Account struct {
-	eventstore.RootAggregate
+	eventsourcing.RootAggregate
 	Status  event.Status `json:"status,omitempty"`
 	Balance int64        `json:"balance,omitempty"`
 	Owner   string       `json:"owner,omitempty"`
@@ -21,14 +22,15 @@ type Account struct {
 
 func NewAccount() *Account {
 	a := &Account{}
-	a.RootAggregate = eventstore.NewRootAggregate(a)
+	a.RootAggregate = eventsourcing.NewRootAggregate(a)
 	return a
 }
+
 func (a Account) GetType() string {
 	return event.AggregateType_Account
 }
 
-func (a *Account) HandleEvent(e eventstore.Eventer) {
+func (a *Account) HandleEvent(e eventsourcing.Eventer) {
 	switch t := e.(type) {
 	case event.AccountCreated:
 		a.HandleAccountCreated(t)
@@ -46,7 +48,7 @@ func CreateAccount(owner string, id string) *Account {
 		Status: event.OPEN,
 		Owner:  owner,
 	}
-	a.RootAggregate = eventstore.NewRootAggregate(a)
+	a.RootAggregate = eventsourcing.NewRootAggregate(a)
 	a.ApplyChange(event.AccountCreated{
 		ID:    id,
 		Owner: owner,

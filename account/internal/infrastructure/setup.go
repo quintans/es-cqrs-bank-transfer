@@ -12,18 +12,18 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/nats-io/stan.go"
-	"github.com/quintans/eventstore"
-	"github.com/quintans/eventstore/common"
-	"github.com/quintans/eventstore/lock"
-	"github.com/quintans/eventstore/log"
-	"github.com/quintans/eventstore/player"
-	"github.com/quintans/eventstore/projection"
-	"github.com/quintans/eventstore/projection/resumestore"
-	"github.com/quintans/eventstore/sink"
-	"github.com/quintans/eventstore/store"
-	"github.com/quintans/eventstore/store/mongodb"
-	"github.com/quintans/eventstore/subscriber"
-	"github.com/quintans/eventstore/worker"
+	"github.com/quintans/eventsourcing"
+	"github.com/quintans/eventsourcing/common"
+	"github.com/quintans/eventsourcing/lock"
+	"github.com/quintans/eventsourcing/log"
+	"github.com/quintans/eventsourcing/player"
+	"github.com/quintans/eventsourcing/projection"
+	"github.com/quintans/eventsourcing/projection/resumestore"
+	"github.com/quintans/eventsourcing/sink"
+	"github.com/quintans/eventsourcing/store"
+	"github.com/quintans/eventsourcing/store/mongodb"
+	"github.com/quintans/eventsourcing/subscriber"
+	"github.com/quintans/eventsourcing/worker"
 	"github.com/quintans/faults"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -77,7 +77,7 @@ func Setup(cfg *Config, logger log.Logger) {
 	if err != nil {
 		logger.Fatal(err)
 	}
-	es := eventstore.NewEventStore(esRepo, cfg.SnapshotThreshold, entity.AggregateFactory{})
+	es := eventsourcing.NewEventStore(esRepo, cfg.SnapshotThreshold, entity.AggregateFactory{})
 
 	ctx := context.Background()
 
@@ -94,7 +94,7 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	txRepo := esdb.NewTransactionRepository(es)
 	txUC := usecase.NewTransactionUsecase(logger, txRepo, accRepo)
-	reactor := controller.NewListener(logger, txUC, event.EventFactory{}, eventstore.JSONCodec{})
+	reactor := controller.NewListener(logger, txUC, event.EventFactory{}, eventsourcing.JSONCodec{})
 
 	c := controller.NewRestController(accUC, txUC)
 
@@ -195,7 +195,7 @@ func startTransactionConsumers(ctx context.Context, logger log.Logger, lockPool 
 						Stream: streamName,
 					},
 					handler,
-					projection.WithFilter(func(e eventstore.Event) bool {
+					projection.WithFilter(func(e eventsourcing.Event) bool {
 						return common.In(e.Kind, event.Event_TransactionCreated, event.Event_TransactionFailed)
 					}),
 				)

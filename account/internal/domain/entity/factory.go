@@ -1,17 +1,18 @@
 package entity
 
 import (
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
-	"github.com/quintans/eventstore"
+	"github.com/quintans/eventsourcing"
 	"github.com/quintans/faults"
+
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
 
 type AggregateFactory struct {
 	event.EventFactory
 }
 
-func (f AggregateFactory) New(kind string) (eventstore.Typer, error) {
-	var e eventstore.Typer
+func (f AggregateFactory) New(kind string) (eventsourcing.Typer, error) {
+	var e eventsourcing.Typer
 	switch kind {
 	case event.AggregateType_Account:
 		e = NewAccount()

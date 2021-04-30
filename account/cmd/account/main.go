@@ -5,9 +5,10 @@ import (
 
 	"github.com/caarlos0/env/v6"
 	_ "github.com/golang-migrate/migrate/v4/source/file"
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/infrastructure"
-	"github.com/quintans/eventstore/log"
+	"github.com/quintans/eventsourcing/log"
 	"github.com/sirupsen/logrus"
+
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/infrastructure"
 )
 
 func init() {

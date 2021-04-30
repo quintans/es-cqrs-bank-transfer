@@ -3,20 +3,21 @@ package controller
 import (
 	"context"
 
+	"github.com/quintans/eventsourcing"
+	"github.com/quintans/eventsourcing/log"
+
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
-	"github.com/quintans/eventstore"
-	"github.com/quintans/eventstore/log"
 )
 
 type Listener struct {
 	logger  log.Logger
 	txUC    domain.TransactionUsecaser
-	factory eventstore.Factory
-	codec   eventstore.Codec
+	factory eventsourcing.Factory
+	codec   eventsourcing.Codec
 }
 
-func NewListener(logger log.Logger, transactionUsecase domain.TransactionUsecaser, factory eventstore.Factory, codec eventstore.Codec) Listener {
+func NewListener(logger log.Logger, transactionUsecase domain.TransactionUsecaser, factory eventsourcing.Factory, codec eventsourcing.Codec) Listener {
 	return Listener{
 		logger:  logger,
 		txUC:    transactionUsecase,
@@ -25,12 +26,12 @@ func NewListener(logger log.Logger, transactionUsecase domain.TransactionUsecase
 	}
 }
 
-func (p Listener) Handler(ctx context.Context, e eventstore.Event) error {
+func (p Listener) Handler(ctx context.Context, e eventsourcing.Event) error {
 	logger := p.logger.WithTags(log.Tags{
 		"event": e,
 	})
 
-	evt, err := eventstore.RehydrateEvent(p.factory, p.codec, nil, e.Kind, e.Body)
+	evt, err := eventsourcing.RehydrateEvent(p.factory, p.codec, nil, e.Kind, e.Body)
 	if err != nil {
 		return err
 	}

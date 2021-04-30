@@ -4,9 +4,10 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/quintans/eventsourcing/log"
+
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
-	"github.com/quintans/eventstore/log"
 )
 
 type AccountUsecase struct {

@@ -1,13 +1,14 @@
 package entity
 
 import (
+	"github.com/quintans/eventsourcing"
+
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
-	"github.com/quintans/eventstore"
 )
 
 func CreateTransaction(id string, from string, to string, money int64) *Transaction {
 	tx := &Transaction{}
-	tx.RootAggregate = eventstore.NewRootAggregate(tx)
+	tx.RootAggregate = eventsourcing.NewRootAggregate(tx)
 	tx.ApplyChange(event.TransactionCreated{
 		ID:    id,
 		Money: money,
@@ -19,12 +20,12 @@ func CreateTransaction(id string, from string, to string, money int64) *Transact
 
 func NewTransaction() *Transaction {
 	tx := &Transaction{}
-	tx.RootAggregate = eventstore.NewRootAggregate(tx)
+	tx.RootAggregate = eventsourcing.NewRootAggregate(tx)
 	return tx
 }
 
 type Transaction struct {
-	eventstore.RootAggregate
+	eventsourcing.RootAggregate
 	Money         int64          `json:"balance,omitempty"`
 	From          string         `json:"from,omitempty"`
 	To            string         `json:"to,omitempty"`
@@ -36,7 +37,7 @@ func (Transaction) GetType() string {
 	return event.AggregateType_Transaction
 }
 
-func (tx *Transaction) HandleEvent(e eventstore.Eventer) {
+func (tx *Transaction) HandleEvent(e eventsourcing.Eventer) {
 	switch t := e.(type) {
 	case event.TransactionCreated:
 		tx.HandleTransactionCreated(t)

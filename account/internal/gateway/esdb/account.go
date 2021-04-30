@@ -4,19 +4,20 @@ import (
 	"context"
 	"errors"
 
+	"github.com/quintans/eventsourcing"
+	"github.com/quintans/faults"
+
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
-	"github.com/quintans/eventstore"
-	"github.com/quintans/faults"
 )
 
 var accountType = (&entity.Account{}).GetType()
 
 type AccountRepository struct {
-	es eventstore.EventStore
+	es eventsourcing.EventStore
 }
 
-func NewAccountRepository(es eventstore.EventStore) AccountRepository {
+func NewAccountRepository(es eventsourcing.EventStore) AccountRepository {
 	return AccountRepository{
 		es: es,
 	}
@@ -35,13 +36,13 @@ func (r AccountRepository) Exec(ctx context.Context, id string, do func(*entity.
 	if has || err != nil {
 		return faults.Wrap(err)
 	}
-	return r.es.Exec(ctx, id, func(a eventstore.Aggregater) (eventstore.Aggregater, error) {
+	return r.es.Exec(ctx, id, func(a eventsourcing.Aggregater) (eventsourcing.Aggregater, error) {
 		acc, err := do(a.(*entity.Account))
 		if err != nil {
 			return nil, errorMap(err)
 		}
 		return acc, nil
-	}, eventstore.WithIdempotencyKey(idempotencyKey))
+	}, eventsourcing.WithIdempotencyKey(idempotencyKey))
 }
 
 func (r AccountRepository) New(ctx context.Context, agg *entity.Account) error {
@@ -49,7 +50,7 @@ func (r AccountRepository) New(ctx context.Context, agg *entity.Account) error {
 }
 
 func errorMap(err error) error {
-	if errors.Is(err, eventstore.ErrUnknownAggregateID) {
+	if errors.Is(err, eventsourcing.ErrUnknownAggregateID) {
 		return faults.Wrap(domain.ErrEntityNotFound)
 	}
 	return err
