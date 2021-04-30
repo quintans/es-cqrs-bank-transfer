@@ -12,9 +12,7 @@ import (
 	log "github.com/sirupsen/logrus"
 )
 
-var (
-	ErrAggregateNotFound = errors.New("Aggregate Not Found")
-)
+var ErrAggregateNotFound = errors.New("Aggregate Not Found")
 
 type ProjectionUsecase struct {
 	balanceRepository domain.BalanceRepository
@@ -106,7 +104,7 @@ func (b ProjectionUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry
 }
 
 func (b ProjectionUsecase) GetLastEventID(ctx context.Context) (string, error) {
-	// get the latest event ID from the eventstore
+	// get the latest event ID from the eventsourcing
 	eventID, err := b.balanceRepository.GetMaxEventID(ctx)
 	if err != nil {
 		return "", faults.Errorf("Could not get last event ID: %w", err)

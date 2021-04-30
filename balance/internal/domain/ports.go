@@ -6,7 +6,7 @@ import (
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
-	"github.com/quintans/eventstore"
+	"github.com/quintans/eventsourcing"
 )
 
 type Metadata struct {
@@ -44,7 +44,7 @@ type BalanceRepository interface {
 }
 
 type EventHandler interface {
-	Handle(ctx context.Context, e eventstore.Event) error
+	Handle(ctx context.Context, e eventsourcing.Event) error
 }
 
 const (

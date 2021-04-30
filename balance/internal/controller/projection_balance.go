@@ -5,22 +5,22 @@ import (
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
-	"github.com/quintans/eventstore"
+	"github.com/quintans/eventsourcing"
 	log "github.com/sirupsen/logrus"
 )
 
 type ProjectionBalance struct {
 	projectionUC domain.ProjectionUsecase
-	factory      eventstore.Factory
-	codec        eventstore.Codec
-	upcaster     eventstore.Upcaster
+	factory      eventsourcing.Factory
+	codec        eventsourcing.Codec
+	upcaster     eventsourcing.Upcaster
 }
 
 func NewProjectionBalance(
 	projectionUC domain.ProjectionUsecase,
-	factory eventstore.Factory,
-	codec eventstore.Codec,
-	upcaster eventstore.Upcaster,
+	factory eventsourcing.Factory,
+	codec eventsourcing.Codec,
+	upcaster eventsourcing.Upcaster,
 ) ProjectionBalance {
 	return ProjectionBalance{
 		projectionUC: projectionUC,
@@ -42,7 +42,7 @@ func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes
 	return lastEventID, nil
 }
 
-func (p ProjectionBalance) Handle(ctx context.Context, e eventstore.Event) error {
+func (p ProjectionBalance) Handle(ctx context.Context, e eventsourcing.Event) error {
 	logger := log.WithFields(log.Fields{
 		"projection": domain.ProjectionBalance,
 		"event":      e,
@@ -53,7 +53,7 @@ func (p ProjectionBalance) Handle(ctx context.Context, e eventstore.Event) error
 		EventID:     e.ID,
 	}
 
-	evt, err := eventstore.RehydrateEvent(p.factory, p.codec, p.upcaster, e.Kind, e.Body)
+	evt, err := eventsourcing.RehydrateEvent(p.factory, p.codec, p.upcaster, e.Kind, e.Body)
 	if err != nil {
 		return err
 	}
