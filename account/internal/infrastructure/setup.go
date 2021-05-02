@@ -3,7 +3,6 @@ package infrastructure
 import (
 	"context"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -13,7 +12,6 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/nats-io/stan.go"
 	"github.com/quintans/eventsourcing"
-	"github.com/quintans/eventsourcing/common"
 	"github.com/quintans/eventsourcing/lock"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/player"
@@ -25,8 +23,6 @@ import (
 	"github.com/quintans/eventsourcing/subscriber"
 	"github.com/quintans/eventsourcing/worker"
 	"github.com/quintans/faults"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
@@ -101,7 +97,7 @@ func Setup(cfg *Config, logger log.Logger) {
 	// event forwarding
 	workers := startEventForwarder(ctx, logger, connStr, pool, cfg)
 
-	workers = append(workers, startTransactionConsumers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
+	workers = append(workers, startReactorConsumers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
 
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "forwarder-member", cfg.LockExpiry)
 	if err != nil {
@@ -114,14 +110,9 @@ func Setup(cfg *Config, logger log.Logger) {
 	startRestServer(c, cfg.ApiPort)
 }
 
-type LockerFactory interface {
-	NewLock(lockName string, expiry time.Duration) worker.Locker
-}
-
-type EventForwarder struct {
-	LockFactory LockerFactory `wire:""`
-}
-
+// startEventForwarder creates workers that listen to database changes,
+// transform them to events and publish them into the message bus.
+// Partitions will be grouped in slots, and that will determine the number of workers.
 func startEventForwarder(ctx context.Context, logger log.Logger, connStr string, lockPool lock.ConsulLockPool, cfg *Config) []worker.Worker {
 	partitionSlots, err := worker.ParseSlots(cfg.Forwarder.PartitionSlots)
 	if err != nil {
@@ -133,9 +124,16 @@ func startEventForwarder(ctx context.Context, logger log.Logger, connStr string,
 			partitions = v.To
 		}
 	}
+	lockFact := func(lockName string) lock.Locker {
+		return lockPool.NewLock(lockName, cfg.LockExpiry)
+	}
+	feederFact := func(partitionLow, partitionHi uint32) store.Feeder {
+		return mongodb.NewFeed(logger, connStr, cfg.EsName, mongodb.WithPartitions(partitions, partitionLow, partitionHi))
+	}
 
+	const name = "forwarder"
 	// sinker provider
-	clientID := "forwarder-id-" + uuid.New().String()
+	clientID := name + "-" + uuid.New().String()
 	sinker, err := sink.NewNatsSink(logger, cfg.Topic, partitions, "test-cluster", clientID, stan.NatsURL(cfg.NatsURL))
 	if err != nil {
 		logger.Fatalf("Error initialising NATS (%s) Sink '%s' on boot: %+v", cfg.NatsURL, clientID, err)
@@ -145,70 +143,28 @@ func startEventForwarder(ctx context.Context, logger log.Logger, connStr string,
 		sinker.Close()
 	}()
 
-	workers := make([]worker.Worker, len(partitionSlots))
-	for i, v := range partitionSlots {
-
-		// feed provider
-		listener := mongodb.NewFeed(logger, connStr, cfg.EsName, mongodb.WithPartitions(partitions, v.From, v.To))
-
-		slots := fmt.Sprintf("%d-%d", v.From, v.To)
-		workers[i] = worker.NewRunWorker(
-			logger,
-			"forwarder-worker-"+slots,
-			lockPool.NewLock("forwarder-lock-"+slots, cfg.LockExpiry),
-			store.NewForwarder(
-				logger,
-				"forwarder-"+slots,
-				listener,
-				sinker,
-			))
-	}
-
-	return workers
+	return worker.EventForwarders(ctx, logger, name, lockFact, feederFact, sinker, partitionSlots)
 }
 
-func startTransactionConsumers(ctx context.Context, logger log.Logger, lockPool lock.ConsulLockPool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
+// startReactorConsumers creates workers that listen to events coming through the event bus,
+// forwarding them to an handler. This is the same approache used for projections, but for the write side of things.
+// The number of workers will be equal to the number of partitions.
+func startReactorConsumers(ctx context.Context, logger log.Logger, lockPool lock.ConsulLockPool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
+	lockFact := func(lockName string) lock.Locker {
+		return lockPool.NewLock(lockName, cfg.LockExpiry)
+	}
+
 	streamResumer, err := resumestore.NewMongoDBStreamResumer(dbURL, cfg.EsName, "stream_resume")
 	if err != nil {
 		logger.Fatal("Error instantiating Locker: %+v", err)
 	}
-	streamName := "accounts-reactor"
+	const streamName = "accounts-reactor"
 	natsSub, err := subscriber.NewNatsSubscriber(ctx, logger, cfg.NatsURL, "test-cluster", streamName+"-"+uuid.New().String(), streamResumer)
 	if err != nil {
 		logger.Fatalf("Error creating NATS subscriber: %+v", err)
 	}
 
-	workers := make([]worker.Worker, cfg.Partitions)
-	var i uint32
-	for i = 0; i < cfg.Partitions; i++ {
-		x := i
-		name := streamName + "-lock-" + strconv.Itoa(int(x))
-		workers[x] = worker.NewRunWorker(
-			logger,
-			name,
-			lockPool.NewLock(name, cfg.LockExpiry),
-			worker.NewTask(func(ctx context.Context) (<-chan struct{}, error) {
-				done, err := natsSub.StartConsumer(
-					ctx,
-					projection.StreamResume{
-						Topic:  common.TopicWithPartition(cfg.Topic, x+1),
-						Stream: streamName,
-					},
-					handler,
-					projection.WithFilter(func(e eventsourcing.Event) bool {
-						return common.In(e.Kind, event.Event_TransactionCreated, event.Event_TransactionFailed)
-					}),
-				)
-				if err != nil {
-					return nil, faults.Errorf("Unable to start consumer for %s: %w", name, err)
-				}
-
-				return done, nil
-			}),
-		)
-	}
-
-	return workers
+	return worker.ReactorConsumers(ctx, logger, streamName, lockFact, cfg.Topic, cfg.Partitions, natsSub, handler)
 }
 
 func startRestServer(c controller.RestController, port int) {
@@ -228,23 +184,6 @@ func startRestServer(c controller.RestController, port int) {
 	// Start server
 	address := fmt.Sprintf(":%d", port)
 	e.Logger.Fatal(e.Start(address))
-}
-
-func newDB(dbURL string) (*mongo.Client, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	opts := options.Client().ApplyURI(dbURL)
-	client, err := mongo.Connect(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	err = client.Ping(ctx, nil)
-	if err != nil {
-		return nil, faults.Wrap(err)
-	}
-
-	return client, nil
 }
 
 func migration(logger log.Logger, dbURL string, sourceURL string) error {

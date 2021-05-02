@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/quintans/eventsourcing"
+	"github.com/quintans/eventsourcing/common"
 	"github.com/quintans/eventsourcing/log"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
@@ -27,6 +28,10 @@ func NewListener(logger log.Logger, transactionUsecase domain.TransactionUsecase
 }
 
 func (p Listener) Handler(ctx context.Context, e eventsourcing.Event) error {
+	if !common.In(e.Kind, event.Event_TransactionCreated, event.Event_TransactionFailed) {
+		return nil
+	}
+
 	logger := p.logger.WithTags(log.Tags{
 		"event": e,
 	})

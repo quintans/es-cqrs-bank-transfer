@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/labstack/echo/v4"
+
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 )
 
