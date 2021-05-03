@@ -3,6 +3,9 @@ package infrastructure
 import (
 	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
@@ -23,6 +26,7 @@ import (
 	"github.com/quintans/eventsourcing/subscriber"
 	"github.com/quintans/eventsourcing/worker"
 	"github.com/quintans/faults"
+	"github.com/quintans/toolkit/locks"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
@@ -75,7 +79,7 @@ func Setup(cfg *Config, logger log.Logger) {
 	}
 	es := eventsourcing.NewEventStore(esRepo, cfg.SnapshotThreshold, entity.AggregateFactory{})
 
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
 
 	pool, err := lock.NewConsulLockPool(cfg.ConsulURL)
 	if err != nil {
@@ -94,26 +98,46 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	c := controller.NewRestController(accUC, txUC)
 
-	// event forwarding
-	workers := startEventForwarder(ctx, logger, connStr, pool, cfg)
+	latch := locks.NewCountDownLatch()
 
-	workers = append(workers, startReactorConsumers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
+	// event forwarding
+	latch.Add(1)
+	workers := eventForwarderWorkers(ctx, logger, latch, connStr, pool, cfg)
+
+	workers = append(workers, reactorConsumerWorkers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
 
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "forwarder-member", cfg.LockExpiry)
 	if err != nil {
 		logger.Fatal(err)
 	}
 
-	go player.StartGrpcServer(ctx, cfg.GrpcAddress, esRepo)
-	go worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
+	latch.Add(1)
+	go func() {
+		player.StartGrpcServer(ctx, cfg.GrpcAddress, esRepo)
+		latch.Done()
+	}()
+
+	latch.Add(1)
+	go func() {
+		worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
+		latch.Done()
+	}()
+
 	// Rest server
-	startRestServer(c, cfg.ApiPort)
+	latch.Add(1)
+	go startRestServer(ctx, logger, latch, c, cfg.ApiPort)
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	<-quit
+	cancel()
+	latch.WaitWithTimeout(3 * time.Second)
 }
 
-// startEventForwarder creates workers that listen to database changes,
+// eventForwarderWorkers creates workers that listen to database changes,
 // transform them to events and publish them into the message bus.
 // Partitions will be grouped in slots, and that will determine the number of workers.
-func startEventForwarder(ctx context.Context, logger log.Logger, connStr string, lockPool lock.ConsulLockPool, cfg *Config) []worker.Worker {
+func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, connStr string, lockPool lock.ConsulLockPool, cfg *Config) []worker.Worker {
 	partitionSlots, err := worker.ParseSlots(cfg.Forwarder.PartitionSlots)
 	if err != nil {
 		logger.Fatal(err)
@@ -141,15 +165,16 @@ func startEventForwarder(ctx context.Context, logger log.Logger, connStr string,
 	go func() {
 		<-ctx.Done()
 		sinker.Close()
+		latch.Done()
 	}()
 
-	return worker.EventForwarders(ctx, logger, name, lockFact, feederFact, sinker, partitionSlots)
+	return projection.EventForwarderWorkers(ctx, logger, name, lockFact, feederFact, sinker, partitionSlots)
 }
 
-// startReactorConsumers creates workers that listen to events coming through the event bus,
+// reactorConsumerWorkers creates workers that listen to events coming through the event bus,
 // forwarding them to an handler. This is the same approache used for projections, but for the write side of things.
 // The number of workers will be equal to the number of partitions.
-func startReactorConsumers(ctx context.Context, logger log.Logger, lockPool lock.ConsulLockPool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
+func reactorConsumerWorkers(ctx context.Context, logger log.Logger, lockPool lock.ConsulLockPool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
 	lockFact := func(lockName string) lock.Locker {
 		return lockPool.NewLock(lockName, cfg.LockExpiry)
 	}
@@ -164,10 +189,12 @@ func startReactorConsumers(ctx context.Context, logger log.Logger, lockPool lock
 		logger.Fatalf("Error creating NATS subscriber: %+v", err)
 	}
 
-	return worker.ReactorConsumers(ctx, logger, streamName, lockFact, cfg.Topic, cfg.Partitions, natsSub, handler)
+	return projection.ReactorConsumerWorkers(ctx, logger, streamName, lockFact, cfg.Topic, cfg.Partitions, natsSub, handler)
 }
 
-func startRestServer(c controller.RestController, port int) {
+func startRestServer(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, c controller.RestController, port int) {
+	defer latch.Done()
+
 	// Echo instance
 	e := echo.New()
 
@@ -181,9 +208,22 @@ func startRestServer(c controller.RestController, port int) {
 	e.POST("/transactions", c.Transaction)
 	e.GET("/accounts/:id", c.Balance)
 
+	go func() {
+		<-ctx.Done()
+		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := e.Shutdown(c); err != nil {
+			logger.Fatal(err)
+		}
+	}()
+
 	// Start server
 	address := fmt.Sprintf(":%d", port)
-	e.Logger.Fatal(e.Start(address))
+	if err := e.Start(address); err != nil {
+		logger.WithError(err).Error("failing shutting down the server")
+	} else {
+		logger.Info("shutting down the server")
+	}
 }
 
 func migration(logger log.Logger, dbURL string, sourceURL string) error {
