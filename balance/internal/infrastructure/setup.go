@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"strconv"
 	"syscall"
 	"time"
 
@@ -19,14 +18,13 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
 	"github.com/quintans/eventsourcing"
-	"github.com/quintans/eventsourcing/common"
+	"github.com/quintans/eventsourcing/lock"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/player"
 	"github.com/quintans/eventsourcing/projection"
 	"github.com/quintans/eventsourcing/projection/resumestore"
 	"github.com/quintans/eventsourcing/subscriber"
 	"github.com/quintans/eventsourcing/worker"
-	"github.com/quintans/faults"
 	"github.com/quintans/toolkit/locks"
 	"github.com/sirupsen/logrus"
 )
@@ -103,75 +101,39 @@ func Setup(cfg Config) {
 
 	prjCtrl := controller.NewProjectionBalance(prjUC, event.EventFactory{}, eventsourcing.JSONCodec{}, nil)
 
-	tokenStreams := []projection.StreamResume{}
-	unlockWaiter := pool.NewLock("balance-freeze", cfg.LockExpiry)
-	workers := make([]worker.Worker, cfg.Partitions)
-	var i uint32
-	for i = 1; i <= cfg.Partitions; i++ {
-		idx := strconv.Itoa(int(i))
-		resume := projection.StreamResume{
-			Topic:  common.TopicWithPartition(cfg.Topic, i),
-			Stream: "balance-projection",
-		}
-		tokenStreams = append(tokenStreams, resume)
-		runner := projection.NewProjectionPartition(
-			logger,
-			unlockWaiter,
-			natsNotifier,
-			natsSub,
-			resume,
-			func(e eventsourcing.Event) bool {
-				// just to demo filter capability
-				return common.In(e.AggregateType, event.AggregateType_Account)
-			},
-			prjCtrl.Handle,
-		)
-		workers[i-1] = worker.NewRunWorker(
-			logger,
-			"balance-projection-"+idx,
-			pool.NewLock("balance-lock-"+idx, cfg.LockExpiry),
-			runner,
-		)
-	}
-
-	restarter := projection.NewNotifierLockRestarter(
-		logger,
-		unlockWaiter,
-		natsNotifier,
-		func(ctx context.Context) error {
-			for _, ts := range tokenStreams {
-				token, err := natsSub.GetResumeToken(ctx, ts.Topic)
-				if err != nil {
-					return faults.Wrap(err)
-				}
-				err = streamResumer.SetStreamResumeToken(ctx, ts.String(), token)
-				if err != nil {
-					return faults.Wrap(err)
-				}
-			}
-			return nil
-		},
-	)
+	latch := locks.NewCountDownLatch()
 
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "balance-member", cfg.LockExpiry)
 	if err != nil {
 		logger.Fatal(err)
 	}
-	go worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
 
-	balanceUC := usecase.NewBalanceUsecase(repo, restarter, cfg.Partitions, esRepo, prjCtrl)
+	lockFactory := func(lockName string) lock.Locker {
+		return pool.NewLock(lockName, cfg.LockExpiry)
+	}
+	workers, rebuilder := projection.ProjectionWorkersAndRebuilder(logger, "balance", lockFactory, natsNotifier, natsSub, streamResumer, cfg.Topic, cfg.Partitions, prjCtrl.Handle)
+
+	// work balancer
+	latch.Add(1)
+	go func() {
+		worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
+		latch.Done()
+	}()
+
+	balanceUC := usecase.NewBalanceUsecase(repo, rebuilder, cfg.Partitions, esRepo, prjCtrl)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,
 	}
 
-	go startRestServer(ctx, restCtrl, cfg.ApiPort)
+	latch.Add(1)
+	go startRestServer(ctx, latch, restCtrl, cfg.ApiPort)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-quit
 	cancel()
-	time.Sleep(3 * time.Second)
+	latch.WaitWithTimeout(3 * time.Second)
 }
 
 func waitForElastic(es *elasticsearch.Client) {
@@ -195,7 +157,9 @@ func waitForElastic(es *elasticsearch.Client) {
 	logger.Info("Elasticsearch info: ", res)
 }
 
-func startRestServer(ctx context.Context, c controller.RestController, port int) {
+func startRestServer(ctx context.Context, latch *locks.CountDownLatch, c controller.RestController, port int) {
+	defer latch.Done()
+
 	// Echo instance
 	e := echo.New()
 
@@ -214,13 +178,15 @@ func startRestServer(ctx context.Context, c controller.RestController, port int)
 		c, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		if err := e.Shutdown(c); err != nil {
-			e.Logger.Fatal(err)
+			logger.Fatal(err)
 		}
 	}()
 
 	// Start server
 	address := fmt.Sprintf(":%d", port)
 	if err := e.Start(address); err != nil {
+		logger.WithError(err).Error("failing shutting down the server")
+	} else {
 		logger.Info("shutting down the server")
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/eventsourcing"
+	"github.com/quintans/eventsourcing/common"
 	log "github.com/sirupsen/logrus"
 )
 
@@ -43,6 +44,10 @@ func (p ProjectionBalance) GetResumeEventIDs(ctx context.Context, aggregateTypes
 }
 
 func (p ProjectionBalance) Handle(ctx context.Context, e eventsourcing.Event) error {
+	if !common.In(e.AggregateType, event.AggregateType_Account) {
+		return nil
+	}
+
 	logger := log.WithFields(log.Fields{
 		"projection": domain.ProjectionBalance,
 		"event":      e,
