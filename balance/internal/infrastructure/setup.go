@@ -13,8 +13,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
+	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
 	"github.com/quintans/eventsourcing"
@@ -27,6 +27,8 @@ import (
 	"github.com/quintans/eventsourcing/worker"
 	"github.com/quintans/toolkit/locks"
 	"github.com/sirupsen/logrus"
+
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
 
 const (
@@ -77,48 +79,9 @@ func Setup(cfg Config) {
 	// es player
 	esRepo := player.NewGrpcRepository(cfg.EsAddress)
 
-	natsNotifier, err := subscriber.NewNatsProjectionSubscriber(ctx, logger, cfg.NatsURL, NotificationTopic)
-	if err != nil {
-		logger.Fatalf("Error creating NATS subscriber: %s", err)
-	}
-
-	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
-	pool, err := locks.NewConsulLockPool(cfg.ConsulURL)
-	if err != nil {
-		logger.Fatal("Error instantiating Locker: %v", err)
-	}
-
-	streamResumer, err := resumestore.NewElasticSearchStreamResumer(cfg.ElasticURL, "stream_resume")
-	if err != nil {
-		logger.Fatal("Error instantiating Locker: %v", err)
-	}
-	natsSub, err := subscriber.NewNatsSubscriber(ctx, logger, cfg.NatsURL, "test-cluster", "balance-"+uuid.New().String(), streamResumer)
-	if err != nil {
-		logger.Fatalf("Error creating NATS subscriber: %s", err)
-	}
-
-	prjUC := usecase.NewProjectionUsecase(repo)
-
-	prjCtrl := controller.NewProjectionBalance(prjUC, event.EventFactory{}, eventsourcing.JSONCodec{}, nil)
-
 	latch := locks.NewCountDownLatch()
 
-	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "balance-member", cfg.LockExpiry)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
-	lockFactory := func(lockName string) lock.Locker {
-		return pool.NewLock(lockName, cfg.LockExpiry)
-	}
-	workers, rebuilder := projection.ProjectionWorkersAndRebuilder(logger, "balance", lockFactory, natsNotifier, natsSub, streamResumer, cfg.Topic, cfg.Partitions, prjCtrl.Handle)
-
-	// work balancer
-	latch.Add(1)
-	go func() {
-		worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
-		latch.Done()
-	}()
+	prjCtrl, rebuilder := startProjection(ctx, cfg, latch, repo)
 
 	balanceUC := usecase.NewBalanceUsecase(repo, rebuilder, cfg.Partitions, esRepo, prjCtrl)
 
@@ -155,6 +118,61 @@ func waitForElastic(es *elasticsearch.Client) {
 	}
 	defer res.Body.Close()
 	logger.Info("Elasticsearch info: ", res)
+}
+
+func startProjection(ctx context.Context, cfg Config, latch *locks.CountDownLatch, repo domain.BalanceRepository) (domain.EventHandler, projection.Rebuilder) {
+	natsNotifier, err := subscriber.NewNatsProjectionSubscriber(ctx, logger, cfg.NatsURL, NotificationTopic)
+	if err != nil {
+		logger.Fatalf("Error creating NATS subscriber: %s", err)
+	}
+
+	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
+	pool, err := locks.NewConsulLockPool(cfg.ConsulURL)
+	if err != nil {
+		logger.Fatal("Error instantiating Locker: %v", err)
+	}
+
+	streamResumer, err := resumestore.NewElasticSearchStreamResumer(cfg.ElasticURL, "stream_resume")
+	if err != nil {
+		logger.Fatal("Error instantiating Locker: %v", err)
+	}
+	natsSub, err := subscriber.NewNatsSubscriber(ctx, logger, cfg.NatsURL, "test-cluster", "balance-"+uuid.New().String(), streamResumer)
+	if err != nil {
+		logger.Fatalf("Error creating NATS subscriber: %s", err)
+	}
+
+	prjUC := usecase.NewProjectionUsecase(repo)
+
+	prjCtrl := controller.NewProjectionBalance(prjUC, event.EventFactory{}, eventsourcing.JSONCodec{}, nil)
+
+	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "balance-member", cfg.LockExpiry)
+	if err != nil {
+		logger.Fatal(err)
+	}
+
+	lockFactory := func(lockName string) lock.Locker {
+		return pool.NewLock(lockName, cfg.LockExpiry)
+	}
+	workers, rebuilder := projection.ProjectionWorkersAndRebuilder(
+		logger,
+		"balance",
+		lockFactory,
+		natsNotifier,
+		natsSub,
+		streamResumer,
+		cfg.Topic,
+		cfg.Partitions,
+		prjCtrl.Handle,
+	)
+
+	// work balancer
+	latch.Add(1)
+	go func() {
+		worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
+		latch.Done()
+	}()
+
+	return prjCtrl, rebuilder
 }
 
 func startRestServer(ctx context.Context, latch *locks.CountDownLatch, c controller.RestController, port int) {
