@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/eventsourcing"
 )
@@ -21,16 +20,13 @@ type LastIDs struct {
 }
 
 type ProjectionUsecase interface {
-	AccountCreated(ctx context.Context, m Metadata, ac event.AccountCreated) error
-	MoneyDeposited(ctx context.Context, m Metadata, ac event.MoneyDeposited) error
-	MoneyWithdrawn(ctx context.Context, m Metadata, ac event.MoneyWithdrawn) error
-	GetLastEventID(ctx context.Context) (string, error)
+	RebuildBalance(ctx context.Context, after time.Time) func(ctx context.Context) (string, error)
+	RebuildWrapUp(ctx context.Context, afterEventID string) (string, error)
 }
 
 type BalanceUsecase interface {
 	GetOne(ctx context.Context, id string) (entity.Balance, error)
 	ListAll(ctx context.Context) ([]entity.Balance, error)
-	RebuildBalance(ctx context.Context, after time.Time) error
 }
 
 type BalanceRepository interface {

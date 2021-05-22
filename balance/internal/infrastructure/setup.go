@@ -81,16 +81,16 @@ func Setup(cfg Config) {
 
 	latch := locks.NewCountDownLatch()
 
-	prjCtrl, rebuilder := startProjection(ctx, cfg, latch, repo)
+	prjCtrl := startProjection(ctx, cfg, latch, repo, esRepo)
 
-	balanceUC := usecase.NewBalanceUsecase(repo, rebuilder, cfg.Partitions, esRepo, prjCtrl)
+	balanceUC := usecase.NewBalanceUsecase(repo)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,
 	}
 
 	latch.Add(1)
-	go startRestServer(ctx, latch, restCtrl, cfg.ApiPort)
+	go startRestServer(ctx, latch, restCtrl, prjCtrl, cfg.ApiPort)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
@@ -120,7 +120,13 @@ func waitForElastic(es *elasticsearch.Client) {
 	logger.Info("Elasticsearch info: ", res)
 }
 
-func startProjection(ctx context.Context, cfg Config, latch *locks.CountDownLatch, repo domain.BalanceRepository) (domain.EventHandler, projection.Rebuilder) {
+func startProjection(
+	ctx context.Context,
+	cfg Config,
+	latch *locks.CountDownLatch,
+	repo domain.BalanceRepository,
+	esRepo player.Repository,
+) controller.ProjectionBalance {
 	natsNotifier, err := subscriber.NewNatsProjectionSubscriber(ctx, logger, cfg.NatsURL, NotificationTopic)
 	if err != nil {
 		logger.Fatalf("Error creating NATS subscriber: %s", err)
@@ -141,18 +147,11 @@ func startProjection(ctx context.Context, cfg Config, latch *locks.CountDownLatc
 		logger.Fatalf("Error creating NATS subscriber: %s", err)
 	}
 
-	prjUC := usecase.NewProjectionUsecase(repo)
-
-	prjCtrl := controller.NewProjectionBalance(prjUC, event.EventFactory{}, eventsourcing.JSONCodec{}, nil)
-
-	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "balance-member", cfg.LockExpiry)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
 	lockFactory := func(lockName string) lock.Locker {
 		return pool.NewLock(lockName, cfg.LockExpiry)
 	}
+
+	prjUC := usecase.NewProjectionUsecase(repo, event.EventFactory{}, eventsourcing.JSONCodec{}, nil, esRepo)
 	workers, rebuilder := projection.ProjectionWorkersAndRebuilder(
 		logger,
 		"balance",
@@ -162,8 +161,14 @@ func startProjection(ctx context.Context, cfg Config, latch *locks.CountDownLatc
 		streamResumer,
 		cfg.Topic,
 		cfg.Partitions,
-		prjCtrl.Handle,
+		prjUC.Handle,
 	)
+	prjCtrl := controller.NewProjectionBalance(prjUC, rebuilder)
+
+	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "balance-member", cfg.LockExpiry)
+	if err != nil {
+		logger.Fatal(err)
+	}
 
 	// work balancer
 	latch.Add(1)
@@ -172,10 +177,10 @@ func startProjection(ctx context.Context, cfg Config, latch *locks.CountDownLatc
 		latch.Done()
 	}()
 
-	return prjCtrl, rebuilder
+	return prjCtrl
 }
 
-func startRestServer(ctx context.Context, latch *locks.CountDownLatch, c controller.RestController, port int) {
+func startRestServer(ctx context.Context, latch *locks.CountDownLatch, restCtrl controller.RestController, prjCtrl controller.ProjectionBalance, port int) {
 	defer latch.Done()
 
 	// Echo instance
@@ -186,10 +191,10 @@ func startRestServer(ctx context.Context, latch *locks.CountDownLatch, c control
 	e.Use(middleware.Recover())
 
 	// Routes
-	e.GET("/", c.Ping)
-	e.GET("/balance/:id", c.GetOne)
-	e.GET("/balance/", c.ListAll)
-	e.GET("/rebuild/balance", c.RebuildBalance)
+	e.GET("/", restCtrl.Ping)
+	e.GET("/balance/:id", restCtrl.GetOne)
+	e.GET("/balance/", restCtrl.ListAll)
+	e.GET("/rebuild/balance", prjCtrl.RebuildBalance)
 
 	go func() {
 		<-ctx.Done()

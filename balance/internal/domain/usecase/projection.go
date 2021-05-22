@@ -3,31 +3,81 @@ package usecase
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
+	"github.com/quintans/eventsourcing"
+	"github.com/quintans/eventsourcing/common"
+	"github.com/quintans/eventsourcing/eventid"
+	"github.com/quintans/eventsourcing/player"
+	"github.com/quintans/eventsourcing/store"
 	"github.com/quintans/faults"
 	"github.com/sirupsen/logrus"
-	log "github.com/sirupsen/logrus"
 )
 
-var ErrAggregateNotFound = errors.New("Aggregate Not Found")
+var ErrAggregateNotFound = errors.New("aggregate Not Found")
 
 type ProjectionUsecase struct {
 	balanceRepository domain.BalanceRepository
+	factory           eventsourcing.Factory
+	codec             eventsourcing.Codec
+	upcaster          eventsourcing.Upcaster
+	esRepo            player.Repository
 }
 
 func NewProjectionUsecase(
 	balanceRepository domain.BalanceRepository,
+	factory eventsourcing.Factory,
+	codec eventsourcing.Codec,
+	upcaster eventsourcing.Upcaster,
+	esRepo player.Repository,
 ) ProjectionUsecase {
 	return ProjectionUsecase{
 		balanceRepository: balanceRepository,
+		factory:           factory,
+		codec:             codec,
+		upcaster:          upcaster,
+		esRepo:            esRepo,
 	}
 }
 
-func (b ProjectionUsecase) AccountCreated(ctx context.Context, m domain.Metadata, ac event.AccountCreated) error {
-	logger := log.WithFields(log.Fields{
+func (p ProjectionUsecase) Handle(ctx context.Context, e eventsourcing.Event) error {
+	if !common.In(e.AggregateType, event.AggregateType_Account) {
+		return nil
+	}
+
+	logger := logrus.WithFields(logrus.Fields{
+		"projection": domain.ProjectionBalance,
+		"event":      e,
+	})
+
+	m := domain.Metadata{
+		AggregateID: e.AggregateID,
+		EventID:     e.ID,
+	}
+
+	evt, err := eventsourcing.RehydrateEvent(p.factory, p.codec, p.upcaster, e.Kind, e.Body)
+	if err != nil {
+		return err
+	}
+
+	switch t := evt.(type) {
+	case event.AccountCreated:
+		err = p.accountCreated(ctx, m, t)
+	case event.MoneyDeposited:
+		err = p.moneyDeposited(ctx, m, t)
+	case event.MoneyWithdrawn:
+		err = p.moneyWithdrawn(ctx, m, t)
+	default:
+		logger.Warnf("Unknown event type: %s\n", e.Kind)
+	}
+	return err
+}
+
+func (b ProjectionUsecase) accountCreated(ctx context.Context, m domain.Metadata, ac event.AccountCreated) error {
+	logger := logrus.WithFields(logrus.Fields{
 		"method": "ProjectionUsecase.AccountCreated",
 	})
 
@@ -47,8 +97,8 @@ func (b ProjectionUsecase) AccountCreated(ctx context.Context, m domain.Metadata
 	return b.balanceRepository.CreateAccount(ctx, e)
 }
 
-func (b ProjectionUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata, ac event.MoneyDeposited) error {
-	logger := log.WithFields(log.Fields{
+func (b ProjectionUsecase) moneyDeposited(ctx context.Context, m domain.Metadata, ac event.MoneyDeposited) error {
+	logger := logrus.WithFields(logrus.Fields{
 		"method": "ProjectionUsecase.MoneyDeposited",
 	})
 	ignore, err := b.ignoreEvent(ctx, logger, m)
@@ -56,6 +106,9 @@ func (b ProjectionUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata
 		return err
 	}
 	agg, err := b.balanceRepository.GetByID(ctx, m.AggregateID)
+	if err != nil {
+		return nil
+	}
 	if agg.IsZero() {
 		return faults.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
@@ -68,8 +121,8 @@ func (b ProjectionUsecase) MoneyDeposited(ctx context.Context, m domain.Metadata
 	return b.balanceRepository.Update(ctx, update)
 }
 
-func (b ProjectionUsecase) MoneyWithdrawn(ctx context.Context, m domain.Metadata, ac event.MoneyWithdrawn) error {
-	logger := log.WithFields(log.Fields{
+func (b ProjectionUsecase) moneyWithdrawn(ctx context.Context, m domain.Metadata, ac event.MoneyWithdrawn) error {
+	logger := logrus.WithFields(logrus.Fields{
 		"method": "ProjectionUsecase.MoneyWithdrawn",
 	})
 	ignore, err := b.ignoreEvent(ctx, logger, m)
@@ -77,6 +130,9 @@ func (b ProjectionUsecase) MoneyWithdrawn(ctx context.Context, m domain.Metadata
 		return err
 	}
 	agg, err := b.balanceRepository.GetByID(ctx, m.AggregateID)
+	if err != nil {
+		return nil
+	}
 	if agg.IsZero() {
 		return faults.Errorf("Unknown aggregate with ID %s: %w", m.AggregateID, ErrAggregateNotFound)
 	}
@@ -103,12 +159,36 @@ func (b ProjectionUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry
 	return false, nil
 }
 
-func (b ProjectionUsecase) GetLastEventID(ctx context.Context) (string, error) {
-	// get the latest event ID from the eventsourcing
-	eventID, err := b.balanceRepository.GetMaxEventID(ctx)
-	if err != nil {
-		return "", faults.Errorf("Could not get last event ID: %w", err)
-	}
+func (b ProjectionUsecase) RebuildBalance(ctx context.Context, after time.Time) func(ctx context.Context) (string, error) {
+	logger := logrus.WithFields(logrus.Fields{
+		"method": "BalanceUsecase.RebuildBalance",
+	})
 
-	return eventID, nil
+	return func(ctx context.Context) (string, error) {
+		if !after.IsZero() {
+			return eventid.NewEventID(after, "", 0), nil
+		}
+
+		p := player.New(b.esRepo)
+		logger.Info("Cleaning all balance data")
+		err := b.balanceRepository.ClearAllData(ctx)
+		if err != nil {
+			return "", faults.Errorf("Unable to clean balance data: %w", err)
+		}
+		afterEventID, err := p.Replay(ctx, b.Handle, "", store.WithAggregateTypes(event.AggregateType_Account))
+		if err != nil {
+			return "", faults.Errorf("Unable to replay ALL balance data: %w", err)
+		}
+
+		return afterEventID, nil
+	}
+}
+
+func (b ProjectionUsecase) RebuildWrapUp(ctx context.Context, afterEventID string) (string, error) {
+	p := player.New(b.esRepo)
+	afterEventID, err := p.Replay(ctx, b.Handle, afterEventID, store.WithAggregateTypes(event.AggregateType_Account))
+	if err != nil {
+		return "", faults.Errorf("Unable to replay events after cleaning balance data: %w", err)
+	}
+	return afterEventID, nil
 }

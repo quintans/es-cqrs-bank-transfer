@@ -2,8 +2,6 @@ package controller
 
 import (
 	"net/http"
-	"strconv"
-	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
@@ -36,23 +34,4 @@ func (ctl RestController) GetOne(c echo.Context) error {
 	}
 
 	return c.JSON(http.StatusOK, doc)
-}
-
-func (ctl RestController) RebuildBalance(c echo.Context) error {
-	var ts time.Time
-
-	epoch := c.QueryParams().Get("epoch")
-	if epoch != "" {
-		secs, err := strconv.Atoi(epoch)
-		if err != nil {
-			return c.String(http.StatusBadRequest, err.Error())
-		}
-		ts = time.Unix(int64(secs), 0)
-	}
-
-	err := ctl.BalanceUsecase.RebuildBalance(c.Request().Context(), ts)
-	if err != nil {
-		return err
-	}
-	return c.NoContent(http.StatusOK)
 }
