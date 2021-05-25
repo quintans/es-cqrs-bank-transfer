@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -38,7 +39,14 @@ func (p ProjectionBalance) RebuildBalance(c echo.Context) error {
 	}
 
 	ctx := c.Request().Context()
-	err := p.rebuilder.Rebuild(ctx, domain.ProjectionBalance, p.projectionUC.RebuildBalance(ctx, ts), p.projectionUC.RebuildWrapUp)
+	err := p.rebuilder.Rebuild(
+		ctx,
+		domain.ProjectionBalance,
+		func(ctx context.Context) (string, error) {
+			return p.projectionUC.RebuildBalance(ctx, ts)
+		},
+		p.projectionUC.RebuildWrapUp,
+	)
 	if err != nil {
 		return err
 	}

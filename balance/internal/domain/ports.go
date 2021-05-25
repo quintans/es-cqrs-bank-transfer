@@ -20,7 +20,7 @@ type LastIDs struct {
 }
 
 type ProjectionUsecase interface {
-	RebuildBalance(ctx context.Context, after time.Time) func(ctx context.Context) (string, error)
+	RebuildBalance(ctx context.Context, after time.Time) (string, error)
 	RebuildWrapUp(ctx context.Context, afterEventID string) (string, error)
 }
 
