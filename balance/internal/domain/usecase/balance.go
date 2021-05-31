@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 )
@@ -19,7 +20,7 @@ func NewBalanceUsecase(
 	}
 }
 
-func (b BalanceUsecase) GetOne(ctx context.Context, id string) (entity.Balance, error) {
+func (b BalanceUsecase) GetOne(ctx context.Context, id uuid.UUID) (entity.Balance, error) {
 	return b.balanceRepository.GetByID(ctx, id)
 }
 

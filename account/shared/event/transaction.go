@@ -1,5 +1,7 @@
 package event
 
+import "github.com/google/uuid"
+
 type TxStatus string
 
 const (
@@ -14,10 +16,10 @@ const (
 )
 
 type TransactionCreated struct {
-	ID    string `json:"id,omitempty"`
-	Money int64  `json:"money,omitempty"`
-	From  string `json:"from,omitempty"`
-	To    string `json:"to,omitempty"`
+	ID    uuid.UUID `json:"id,omitempty"`
+	Money int64     `json:"money,omitempty"`
+	From  uuid.UUID `json:"from,omitempty"`
+	To    uuid.UUID `json:"to,omitempty"`
 }
 
 func (TransactionCreated) GetType() string {
@@ -33,8 +35,7 @@ func (TransactionFailed) GetType() string {
 	return Event_TransactionFailed
 }
 
-type TransactionSucceeded struct {
-}
+type TransactionSucceeded struct{}
 
 func (TransactionSucceeded) GetType() string {
 	return Event_TransactionSucceeded

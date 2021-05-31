@@ -29,8 +29,8 @@ func NewTransactionUsecase(
 	}
 }
 
-func (uc TransactionUsecase) Create(ctx context.Context, cmd domain.CreateTransactionCommand) (string, error) {
-	id := uuid.New().String()
+func (uc TransactionUsecase) Create(ctx context.Context, cmd domain.CreateTransactionCommand) (uuid.UUID, error) {
+	id := uuid.New()
 	uc.logger.WithTags(log.Tags{
 		"method": "TransactionUsecase.Create",
 	}).Infof("Creating transaction %s from: %s, to: %s, money: %d", id, cmd.From, cmd.To, cmd.Money)
@@ -38,7 +38,7 @@ func (uc TransactionUsecase) Create(ctx context.Context, cmd domain.CreateTransa
 	tx := entity.CreateTransaction(id, cmd.From, cmd.To, cmd.Money)
 	ok, err := uc.txRepo.CreateIfNew(ctx, tx)
 	if !ok || err != nil {
-		return "", err
+		return uuid.Nil, err
 	}
 	return id, nil
 }
@@ -48,7 +48,7 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 		"method": "TransactionUsecase.transactionCreated",
 	})
 
-	if e.From != "" {
+	if e.From != uuid.Nil {
 		logger.Infof("Withdrawing from %s, money: %d", e.From, e.Money)
 		err := uc.accRepo.Exec(ctx, e.From, func(acc *entity.Account) (*entity.Account, error) {
 			err := acc.Withdraw(e.ID, e.Money)
@@ -63,12 +63,12 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 			})
 
 			return nil, err
-		}, e.ID+"_withdraw")
+		}, e.ID.String()+"_withdraw")
 		if err != nil {
 			return err
 		}
 	}
-	if e.To != "" {
+	if e.To != uuid.Nil {
 		logger.Infof("Depositing from %s, money: %d", e.From, e.Money)
 		err := uc.accRepo.Exec(ctx, e.To, func(acc *entity.Account) (*entity.Account, error) {
 			err := acc.Deposit(e.ID, e.Money)
@@ -83,7 +83,7 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 			})
 
 			return nil, err
-		}, e.ID+"_deposit")
+		}, e.ID.String()+"_deposit")
 		if err != nil {
 			return err
 		}
@@ -96,7 +96,7 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 	})
 }
 
-func (uc TransactionUsecase) TransactionFailed(ctx context.Context, aggregateID string, e event.TransactionFailed) error {
+func (uc TransactionUsecase) TransactionFailed(ctx context.Context, aggregateID uuid.UUID, e event.TransactionFailed) error {
 	if !e.Rollback {
 		return nil
 	}
@@ -108,7 +108,7 @@ func (uc TransactionUsecase) TransactionFailed(ctx context.Context, aggregateID 
 	err = uc.accRepo.Exec(ctx, tx.From, func(a *entity.Account) (*entity.Account, error) {
 		err := a.Deposit(tx.ID, tx.Money)
 		return a, err
-	}, tx.ID+"/rollback")
+	}, tx.ID.String()+"/rollback")
 
 	return err
 }

@@ -8,10 +8,11 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
+	"github.com/google/uuid"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
+	"github.com/quintans/eventsourcing/eventid"
 	"github.com/quintans/faults"
-	log "github.com/sirupsen/logrus"
 )
 
 const (
@@ -24,7 +25,7 @@ const (
 )
 
 type GetResponse struct {
-	ID      string      `json:"_id"`
+	ID      uuid.UUID   `json:"_id"`
 	Version int64       `json:"_version"`
 	Source  interface{} `json:"_source"`
 }
@@ -33,8 +34,7 @@ type SearchResponse struct {
 	Hits Hits `json:"hits"`
 }
 
-type Hits struct {
-}
+type Hits struct{}
 
 type BalanceRepository struct {
 	client *elasticsearch.Client
@@ -61,33 +61,43 @@ func (b BalanceRepository) GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.
 		return nil, faults.Errorf("[%s] Error GetAllOrderByOwnerAsc", res.Status())
 	}
 
-	balances := responseToBalances(res)
-	return balances, nil
+	return responseToBalances(res)
 }
 
-func responseToBalances(res *esapi.Response) []entity.Balance {
+func responseToBalances(res *esapi.Response) ([]entity.Balance, error) {
 	mapResp := map[string]interface{}{}
 	if err := json.NewDecoder(res.Body).Decode(&mapResp); err != nil {
-		log.Fatalf("Error parsing SearchRequest response body: %s", err)
+		return nil, faults.Errorf("Error parsing SearchRequest response body: %s", err)
 	}
 	balances := []entity.Balance{}
 	// Iterate the document "hits" returned by API call
 	for _, hit := range mapResp[hits].(map[string]interface{})[hits].([]interface{}) {
 		doc := hit.(map[string]interface{})
-		balances = append(balances, sourceToBalance(doc))
+		b, err := sourceToBalance(doc)
+		if err != nil {
+			return nil, err
+		}
+		balances = append(balances, b)
 	}
-	return balances
+	return balances, nil
 }
 
-func sourceToBalance(doc map[string]interface{}) entity.Balance {
+func sourceToBalance(doc map[string]interface{}) (entity.Balance, error) {
 	source := doc[source].(map[string]interface{})
 	b := entity.Balance{}
-	b.ID = doc["_id"].(string)
+	var err error
+	b.ID, err = uuid.Parse(doc["_id"].(string))
+	if err != nil {
+		return entity.Balance{}, err
+	}
 	if v, ok := doc["_version"]; ok {
 		b.Version = int64(v.(float64))
 	}
 	if v, ok := source["event_id"]; ok {
-		b.EventID = v.(string)
+		b.EventID, err = eventid.Parse(v.(string))
+		if err != nil {
+			return entity.Balance{}, err
+		}
 	}
 	if v, ok := source["partition"]; ok {
 		b.Partition = uint32(v.(float64))
@@ -101,18 +111,18 @@ func sourceToBalance(doc map[string]interface{}) entity.Balance {
 	if v, ok := source["owner"]; ok {
 		b.Owner = v.(string)
 	}
-	return b
+	return b, nil
 }
 
-func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID string) (string, error) {
+func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID uuid.UUID) (eventid.EventID, error) {
 	balance, err := b.GetByID(ctx, aggregateID)
 	if err != nil {
-		return "", err
+		return eventid.Zero, err
 	}
 	return balance.EventID, nil
 }
 
-func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
+func (b BalanceRepository) GetMaxEventID(ctx context.Context) (eventid.EventID, error) {
 	s := `{
 		"sort": [
 		  {
@@ -129,25 +139,28 @@ func (b BalanceRepository) GetMaxEventID(ctx context.Context) (string, error) {
 	}
 	res, err := req.Do(ctx, b.client)
 	if err != nil {
-		return "", faults.Errorf("Error getting response for SearchRequest: %w", err)
+		return eventid.Zero, faults.Errorf("Error getting response for SearchRequest: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return "", faults.Errorf("[%s] Error GetMaxEventID", res.Status())
+		return eventid.Zero, faults.Errorf("[%s] Error GetMaxEventID", res.Status())
 	}
 
-	balances := responseToBalances(res)
+	balances, err := responseToBalances(res)
+	if err != nil {
+		return eventid.Zero, err
+	}
 	if len(balances) > 0 {
 		return balances[0].EventID, nil
 	}
-	return "", nil
+	return eventid.Zero, nil
 }
 
 func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Balance) error {
 	// we don't want to repeat the ID and version values in the doc
 	docID := balance.ID
-	balance.ID = ""
+	balance.ID = uuid.Nil
 	balance.Version = 0
 
 	var s strings.Builder
@@ -157,7 +170,7 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 
 	req := esapi.IndexRequest{
 		Index:      index,
-		DocumentID: docID,
+		DocumentID: docID.String(),
 		Body:       strings.NewReader(s.String()),
 		Refresh:    "true",
 	}
@@ -174,10 +187,10 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 	return nil
 }
 
-func (b BalanceRepository) GetByID(ctx context.Context, aggregateID string) (entity.Balance, error) {
+func (b BalanceRepository) GetByID(ctx context.Context, aggregateID uuid.UUID) (entity.Balance, error) {
 	req := esapi.GetRequest{
 		Index:      index,
-		DocumentID: aggregateID,
+		DocumentID: aggregateID.String(),
 	}
 	res, err := req.Do(ctx, b.client)
 	if err != nil {
@@ -208,7 +221,7 @@ func (b BalanceRepository) GetByID(ctx context.Context, aggregateID string) (ent
 func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) error {
 	// we don't want to repeat the ID and version values in the doc
 	docID := balance.ID
-	balance.ID = ""
+	balance.ID = uuid.Nil
 	balance.Version = 0
 
 	var s strings.Builder
@@ -220,7 +233,7 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 
 	req := esapi.UpdateRequest{
 		Index:      index,
-		DocumentID: docID,
+		DocumentID: docID.String(),
 		Body:       strings.NewReader(s.String()),
 		Refresh:    "true",
 	}

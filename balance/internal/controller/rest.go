@@ -3,6 +3,7 @@ package controller
 import (
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 )
@@ -24,7 +25,10 @@ func (ctl RestController) ListAll(c echo.Context) error {
 }
 
 func (ctl RestController) GetOne(c echo.Context) error {
-	id := c.Param("id")
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return err
+	}
 	doc, err := ctl.BalanceUsecase.GetOne(c.Request().Context(), id)
 	if err != nil {
 		return err

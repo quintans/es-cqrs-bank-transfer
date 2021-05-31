@@ -1,5 +1,9 @@
 package event
 
+import (
+	"github.com/google/uuid"
+)
+
 type Status string
 
 const (
@@ -15,9 +19,9 @@ const (
 )
 
 type AccountCreated struct {
-	ID    string `json:"id,omitempty"`
-	Money int64  `json:"money,omitempty"`
-	Owner string `json:"owner,omitempty"`
+	ID    uuid.UUID `json:"id,omitempty"`
+	Money int64     `json:"money,omitempty"`
+	Owner string    `json:"owner,omitempty"`
 }
 
 func (_ AccountCreated) GetType() string {
@@ -25,8 +29,8 @@ func (_ AccountCreated) GetType() string {
 }
 
 type MoneyWithdrawn struct {
-	Money         int64  `json:"money,omitempty"`
-	TransactionID string `transactionID:"money,omitempty"`
+	Money         int64     `json:"money,omitempty"`
+	TransactionID uuid.UUID `transactionID:"money,omitempty"`
 }
 
 func (_ MoneyWithdrawn) GetType() string {
@@ -34,8 +38,8 @@ func (_ MoneyWithdrawn) GetType() string {
 }
 
 type MoneyDeposited struct {
-	Money         int64  `json:"money,omitempty"`
-	TransactionID string `transactionID:"money,omitempty"`
+	Money         int64     `json:"money,omitempty"`
+	TransactionID uuid.UUID `transactionID:"money,omitempty"`
 }
 
 func (_ MoneyDeposited) GetType() string {

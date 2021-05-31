@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
@@ -53,7 +54,10 @@ func (ctl RestController) Transaction(c echo.Context) error {
 }
 
 func (ctl RestController) Balance(c echo.Context) error {
-	id := c.Param("id")
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		return err
+	}
 	dto, err := ctl.accUC.Balance(c.Request().Context(), id)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {

@@ -98,18 +98,17 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	c := controller.NewRestController(accUC, txUC)
 
-	latch := locks.NewCountDownLatch()
-
-	// event forwarding
-	latch.Add(1)
-	workers := eventForwarderWorkers(ctx, logger, latch, connStr, pool, cfg)
-
-	workers = append(workers, reactorConsumerWorkers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
-
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "forwarder-member", cfg.LockExpiry)
 	if err != nil {
 		logger.Fatal(err)
 	}
+
+	latch := locks.NewCountDownLatch()
+
+	// event forwarding
+	latch.Add(1)
+	memberlist.AddWorkers(eventForwarderWorkers(ctx, logger, latch, connStr, pool, cfg))
+	memberlist.AddWorkers(reactorConsumerWorkers(ctx, logger, pool, connStr, cfg, reactor.Handler))
 
 	latch.Add(1)
 	go func() {
@@ -119,7 +118,7 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	latch.Add(1)
 	go func() {
-		worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
+		memberlist.BalanceWorkers(ctx, logger)
 		latch.Done()
 	}()
 

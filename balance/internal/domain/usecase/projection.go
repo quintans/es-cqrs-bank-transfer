@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
@@ -44,7 +45,7 @@ func NewProjectionUsecase(
 }
 
 func (p ProjectionUsecase) Handle(ctx context.Context, e eventsourcing.Event) error {
-	if !common.In(e.AggregateType, event.AggregateType_Account) {
+	if !common.In(e.AggregateType.String(), event.AggregateType_Account) {
 		return nil
 	}
 
@@ -53,8 +54,12 @@ func (p ProjectionUsecase) Handle(ctx context.Context, e eventsourcing.Event) er
 		"event":      e,
 	})
 
+	aggID, err := uuid.Parse(e.AggregateID)
+	if err != nil {
+		return faults.Errorf("unable to parse aggregate ID: %w", err)
+	}
 	m := domain.Metadata{
-		AggregateID: e.AggregateID,
+		AggregateID: aggID,
 		EventID:     e.ID,
 	}
 
@@ -151,7 +156,7 @@ func (b ProjectionUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry
 		return false, err
 	}
 	// guarding against redelivery
-	if m.EventID <= lastEventID {
+	if m.EventID.Compare(lastEventID) <= 0 {
 		logger.Warnf("Ignoring current event %s, since it is less or equal than last event %s", m.EventID, lastEventID)
 		return true, nil
 	}
@@ -159,29 +164,29 @@ func (b ProjectionUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry
 	return false, nil
 }
 
-func (b ProjectionUsecase) RebuildBalance(ctx context.Context, after time.Time) (string, error) {
+func (b ProjectionUsecase) RebuildBalance(ctx context.Context, after time.Time) (eventid.EventID, error) {
 	logger := logrus.WithFields(logrus.Fields{
 		"method": "BalanceUsecase.RebuildBalance",
 	})
 
 	if !after.IsZero() {
-		return eventid.NewEventID(after, "", 0), nil
+		return eventid.TimeOnly(after), nil
 	}
 
 	logger.Info("Cleaning all balance data")
 	err := b.balanceRepository.ClearAllData(ctx)
 	if err != nil {
-		return "", faults.Errorf("Unable to clean balance data: %w", err)
+		return eventid.Zero, faults.Errorf("Unable to clean balance data: %w", err)
 	}
 
-	return b.RebuildWrapUp(ctx, "")
+	return b.RebuildWrapUp(ctx, eventid.Zero)
 }
 
-func (b ProjectionUsecase) RebuildWrapUp(ctx context.Context, afterEventID string) (string, error) {
+func (b ProjectionUsecase) RebuildWrapUp(ctx context.Context, afterEventID eventid.EventID) (eventid.EventID, error) {
 	p := player.New(b.esRepo)
 	afterEventID, err := p.Replay(ctx, b.Handle, afterEventID, store.WithAggregateTypes(event.AggregateType_Account))
 	if err != nil {
-		return "", faults.Errorf("Unable to replay events after '%s': %w", afterEventID, err)
+		return eventid.Zero, faults.Errorf("Unable to replay events after '%s': %w", afterEventID, err)
 	}
 	return afterEventID, nil
 }

@@ -3,9 +3,11 @@ package controller
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/common"
 	"github.com/quintans/eventsourcing/log"
+	"github.com/quintans/faults"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
@@ -28,7 +30,7 @@ func NewListener(logger log.Logger, transactionUsecase domain.TransactionUsecase
 }
 
 func (p Listener) Handler(ctx context.Context, e eventsourcing.Event) error {
-	if !common.In(e.Kind, event.Event_TransactionCreated, event.Event_TransactionFailed) {
+	if !common.In(e.Kind.String(), event.Event_TransactionCreated, event.Event_TransactionFailed) {
 		return nil
 	}
 
@@ -45,7 +47,12 @@ func (p Listener) Handler(ctx context.Context, e eventsourcing.Event) error {
 	case event.TransactionCreated:
 		err = p.txUC.TransactionCreated(ctx, t)
 	case event.TransactionFailed:
-		err = p.txUC.TransactionFailed(ctx, e.AggregateID, t)
+		var aggID uuid.UUID
+		aggID, err = uuid.Parse(e.AggregateID)
+		if err != nil {
+			return faults.Errorf("unable to parse aggregate ID: %w", err)
+		}
+		err = p.txUC.TransactionFailed(ctx, aggID, t)
 	default:
 		logger.Warnf("Unknown event type: %s\n", e.Kind)
 	}

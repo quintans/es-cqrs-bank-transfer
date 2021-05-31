@@ -8,6 +8,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
+	"github.com/quintans/eventsourcing/eventid"
 	"github.com/quintans/eventsourcing/projection"
 )
 
@@ -42,7 +43,7 @@ func (p ProjectionBalance) RebuildBalance(c echo.Context) error {
 	err := p.rebuilder.Rebuild(
 		ctx,
 		domain.ProjectionBalance,
-		func(ctx context.Context) (string, error) {
+		func(ctx context.Context) (eventid.EventID, error) {
 			return p.projectionUC.RebuildBalance(ctx, ts)
 		},
 		p.projectionUC.RebuildWrapUp,

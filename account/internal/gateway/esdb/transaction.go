@@ -3,12 +3,11 @@ package esdb
 import (
 	"context"
 
+	"github.com/google/uuid"
 	"github.com/quintans/eventsourcing"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 )
-
-var transactionType = (&entity.Transaction{}).GetType()
 
 type TransactionRepository struct {
 	es eventsourcing.EventStore
@@ -20,8 +19,8 @@ func NewTransactionRepository(es eventsourcing.EventStore) TransactionRepository
 	}
 }
 
-func (r TransactionRepository) Get(ctx context.Context, id string) (*entity.Transaction, error) {
-	agg, err := r.es.GetByID(ctx, id)
+func (r TransactionRepository) Get(ctx context.Context, id uuid.UUID) (*entity.Transaction, error) {
+	agg, err := r.es.GetByID(ctx, id.String())
 	if err != nil {
 		return nil, errorMap(err)
 	}
@@ -29,7 +28,7 @@ func (r TransactionRepository) Get(ctx context.Context, id string) (*entity.Tran
 }
 
 func (r TransactionRepository) CreateIfNew(ctx context.Context, agg *entity.Transaction) (bool, error) {
-	a, err := r.es.GetByID(ctx, agg.ID)
+	a, err := r.es.GetByID(ctx, agg.ID.String())
 	if a != nil || err != nil {
 		return false, err
 	}
@@ -38,8 +37,8 @@ func (r TransactionRepository) CreateIfNew(ctx context.Context, agg *entity.Tran
 	return err == nil, errorMap(err)
 }
 
-func (r TransactionRepository) Exec(ctx context.Context, id string, do func(*entity.Transaction) (*entity.Transaction, error)) error {
-	return r.es.Exec(ctx, id, func(a eventsourcing.Aggregater) (eventsourcing.Aggregater, error) {
+func (r TransactionRepository) Exec(ctx context.Context, id uuid.UUID, do func(*entity.Transaction) (*entity.Transaction, error)) error {
+	return r.es.Exec(ctx, id.String(), func(a eventsourcing.Aggregater) (eventsourcing.Aggregater, error) {
 		acc, err := do(a.(*entity.Transaction))
 		if err != nil {
 			return nil, errorMap(err)

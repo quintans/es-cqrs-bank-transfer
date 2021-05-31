@@ -3,6 +3,7 @@ package entity
 import (
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/quintans/eventsourcing"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
@@ -15,6 +16,7 @@ var (
 
 type Account struct {
 	eventsourcing.RootAggregate
+	ID      uuid.UUID    `json:"id"`
 	Status  event.Status `json:"status,omitempty"`
 	Balance int64        `json:"balance,omitempty"`
 	Owner   string       `json:"owner,omitempty"`
@@ -30,6 +32,10 @@ func (a Account) GetType() string {
 	return event.AggregateType_Account
 }
 
+func (a Account) GetID() string {
+	return a.ID.String()
+}
+
 func (a *Account) HandleEvent(e eventsourcing.Eventer) {
 	switch t := e.(type) {
 	case event.AccountCreated:
@@ -43,7 +49,7 @@ func (a *Account) HandleEvent(e eventsourcing.Eventer) {
 	}
 }
 
-func CreateAccount(owner string, id string) *Account {
+func CreateAccount(owner string, id uuid.UUID) *Account {
 	a := &Account{
 		Status: event.OPEN,
 		Owner:  owner,
@@ -64,7 +70,7 @@ func (a *Account) HandleAccountCreated(e event.AccountCreated) {
 	a.Status = event.OPEN
 }
 
-func (a *Account) Withdraw(txID string, money int64) error {
+func (a *Account) Withdraw(txID uuid.UUID, money int64) error {
 	if a.Balance < money {
 		return ErrNotEnoughFunds
 	}
@@ -82,7 +88,7 @@ func (a *Account) HandleMoneyWithdrawn(event event.MoneyWithdrawn) {
 	a.Balance -= event.Money
 }
 
-func (a *Account) Deposit(txID string, money int64) error {
+func (a *Account) Deposit(txID uuid.UUID, money int64) error {
 	if a.Status != event.OPEN {
 		return ErrTransactionsDisabled
 	}

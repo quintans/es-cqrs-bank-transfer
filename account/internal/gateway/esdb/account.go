@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/faults"
 
@@ -23,20 +24,20 @@ func NewAccountRepository(es eventsourcing.EventStore) AccountRepository {
 	}
 }
 
-func (r AccountRepository) Get(ctx context.Context, id string) (*entity.Account, error) {
-	agg, err := r.es.GetByID(ctx, id)
+func (r AccountRepository) Get(ctx context.Context, id uuid.UUID) (*entity.Account, error) {
+	agg, err := r.es.GetByID(ctx, id.String())
 	if err != nil {
 		return nil, errorMap(err)
 	}
 	return agg.(*entity.Account), nil
 }
 
-func (r AccountRepository) Exec(ctx context.Context, id string, do func(*entity.Account) (*entity.Account, error), idempotencyKey string) error {
-	has, err := r.es.HasIdempotencyKey(ctx, accountType, idempotencyKey)
+func (r AccountRepository) Exec(ctx context.Context, id uuid.UUID, do func(*entity.Account) (*entity.Account, error), idempotencyKey string) error {
+	has, err := r.es.HasIdempotencyKey(ctx, eventsourcing.AggregateType(accountType), idempotencyKey)
 	if has || err != nil {
 		return faults.Wrap(err)
 	}
-	return r.es.Exec(ctx, id, func(a eventsourcing.Aggregater) (eventsourcing.Aggregater, error) {
+	return r.es.Exec(ctx, id.String(), func(a eventsourcing.Aggregater) (eventsourcing.Aggregater, error) {
 		acc, err := do(a.(*entity.Account))
 		if err != nil {
 			return nil, errorMap(err)

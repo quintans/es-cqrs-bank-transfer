@@ -3,21 +3,23 @@ package entity
 import (
 	"encoding/base64"
 
+	"github.com/google/uuid"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+	"github.com/quintans/eventsourcing/eventid"
 )
 
 type Balance struct {
-	ID        string       `json:"id"`
-	Version   int64        `json:"version"`
-	EventID   string       `json:"event_id"`
-	Partition uint32       `json:"partition"`
-	Status    event.Status `json:"status,omitempty"`
-	Balance   int64        `json:"balance,omitempty"`
-	Owner     string       `json:"owner,omitempty"`
+	ID        uuid.UUID       `json:"id"`
+	Version   int64           `json:"version"`
+	EventID   eventid.EventID `json:"event_id"`
+	Partition uint32          `json:"partition"`
+	Status    event.Status    `json:"status,omitempty"`
+	Balance   int64           `json:"balance,omitempty"`
+	Owner     string          `json:"owner,omitempty"`
 }
 
 func (b Balance) IsZero() bool {
-	return b.ID == ""
+	return b.ID == uuid.Nil
 }
 
 type Base64 []byte

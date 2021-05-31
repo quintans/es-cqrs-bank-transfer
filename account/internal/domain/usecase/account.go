@@ -22,20 +22,20 @@ func NewAccountUsecase(logger log.Logger, repo domain.AccountRepository) Account
 	}
 }
 
-func (uc AccountUsecase) Create(ctx context.Context, createAccount domain.CreateAccountCommand) (string, error) {
-	id := uuid.New().String()
+func (uc AccountUsecase) Create(ctx context.Context, createAccount domain.CreateAccountCommand) (uuid.UUID, error) {
+	id := uuid.New()
 	uc.logger.WithTags(log.Tags{
 		"method": "AccountUsecase.Create",
 	}).Infof("Creating account with owner:%s, id: %s", createAccount.Owner, id)
 
 	acc := entity.CreateAccount(createAccount.Owner, id)
 	if err := uc.repo.New(ctx, acc); err != nil {
-		return "", err
+		return uuid.Nil, err
 	}
 	return id, nil
 }
 
-func (uc AccountUsecase) Balance(ctx context.Context, id string) (domain.AccountDTO, error) {
+func (uc AccountUsecase) Balance(ctx context.Context, id uuid.UUID) (domain.AccountDTO, error) {
 	var dto domain.AccountDTO
 
 	acc, err := uc.repo.Get(ctx, id)

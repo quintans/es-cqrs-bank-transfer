@@ -1,12 +1,13 @@
 package entity
 
 import (
+	"github.com/google/uuid"
 	"github.com/quintans/eventsourcing"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
 
-func CreateTransaction(id string, from string, to string, money int64) *Transaction {
+func CreateTransaction(id uuid.UUID, from uuid.UUID, to uuid.UUID, money int64) *Transaction {
 	tx := &Transaction{}
 	tx.RootAggregate = eventsourcing.NewRootAggregate(tx)
 	tx.ApplyChange(event.TransactionCreated{
@@ -26,15 +27,20 @@ func NewTransaction() *Transaction {
 
 type Transaction struct {
 	eventsourcing.RootAggregate
+	ID            uuid.UUID      `json:"id"`
 	Money         int64          `json:"balance,omitempty"`
-	From          string         `json:"from,omitempty"`
-	To            string         `json:"to,omitempty"`
+	From          uuid.UUID      `json:"from,omitempty"`
+	To            uuid.UUID      `json:"to,omitempty"`
 	Status        event.TxStatus `json:"status,omitempty"`
 	FailureReason string         `json:"failureReason,omitempty"`
 }
 
 func (Transaction) GetType() string {
 	return event.AggregateType_Transaction
+}
+
+func (tx Transaction) GetID() string {
+	return tx.ID.String()
 }
 
 func (tx *Transaction) HandleEvent(e eventsourcing.Eventer) {
@@ -72,7 +78,7 @@ func (tx *Transaction) DepositFailed(reason string) bool {
 	}
 	tx.ApplyChange(event.TransactionFailed{
 		Reason:   reason,
-		Rollback: tx.From != "",
+		Rollback: tx.From != uuid.Nil,
 	})
 	return true
 }
