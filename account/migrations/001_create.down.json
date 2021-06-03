@@ -5,7 +5,7 @@
     },
     {
         "dropIndexes": "events",
-        "index": "idx_idempotency_aggregate"
+        "index": "idx_idempotency"
     },
     {
         "dropIndexes": "snapshots",

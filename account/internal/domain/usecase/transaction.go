@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/log"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
@@ -43,62 +44,95 @@ func (uc TransactionUsecase) Create(ctx context.Context, cmd domain.CreateTransa
 	return id, nil
 }
 
+// TransactionCreated processes a transaction.
+// This demonstrates how we can use the idempotency key to guard against duplicated events.
+// Since all aggregates belong to the same service, there is no reason to split into several event handlers.
+// Another restriction for the split is that a transaction origin and destination are optional, making it a bit more trickier to split.
+// If the aggregates belonged to different services, then we would have no choice but to break it down into
+// several chained event handlers: TransactionCreated, MoneyWithdrawn, MoneyDeposited, TransactionFailed
 func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.TransactionCreated) error {
 	logger := uc.logger.WithTags(log.Tags{
-		"method": "TransactionUsecase.transactionCreated",
+		"method": "TransactionUsecase.TransactionCreated",
+		"event":  e,
 	})
 
-	if e.From != uuid.Nil {
-		var failed bool
-		logger.Infof("Withdrawing from %s, money: %d", e.From, e.Money)
-		err := uc.accRepo.Exec(ctx, e.From, func(acc *entity.Account) (*entity.Account, error) {
-			err := acc.Withdraw(e.ID, e.Money)
-			if err == nil {
-				return acc, nil
-			}
-
-			failed = true
-			// transaction failed
-			errTx := uc.txRepo.Exec(ctx, e.ID, func(tx *entity.Transaction) (*entity.Transaction, error) {
-				tx.WithdrawFailed("From account: " + err.Error())
-				return tx, nil
-			})
-
-			return nil, errTx
-		}, e.ID.String()+"/withdraw")
-		if failed || err != nil {
-			return err
-		}
+	ok, err := uc.whitdraw(ctx, logger, e.From, e.Money, e.ID)
+	if !ok || err != nil {
+		return err
 	}
 
-	if e.To != uuid.Nil {
-		var failed bool
-		logger.Infof("Depositing from %s, money: %d", e.From, e.Money)
-		err := uc.accRepo.Exec(ctx, e.To, func(acc *entity.Account) (*entity.Account, error) {
-			err := acc.Deposit(e.ID, e.Money)
-			if err == nil {
-				return acc, nil
-			}
-
-			failed = true
-			// transaction failed. Need to rollback withdraw
-			errTx := uc.txRepo.Exec(ctx, e.ID, func(tx *entity.Transaction) (*entity.Transaction, error) {
-				tx.DepositFailed("To account: " + err.Error())
-				return tx, nil
-			})
-
-			return nil, errTx
-		}, e.ID.String()+"/deposit")
-		if failed || err != nil {
-			return err
-		}
+	ok, err = uc.deposit(ctx, logger, e.To, e.Money, e.ID)
+	if !ok || err != nil {
+		return err
 	}
 
 	// complete transaction
 	return uc.txRepo.Exec(ctx, e.ID, func(t *entity.Transaction) (*entity.Transaction, error) {
 		t.Succeeded()
 		return t, nil
-	})
+	}, eventsourcing.EmptyIdempotencyKey)
+}
+
+func (uc TransactionUsecase) whitdraw(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
+	if accID == uuid.Nil {
+		return true, nil
+	}
+
+	var failed bool
+	logger.Infof("Withdrawing from %s, money: %d", accID, money)
+	idempotencyKey := txID.String() + "/withdraw"
+	err := uc.accRepo.Exec(ctx, accID, func(acc *entity.Account) (*entity.Account, error) {
+		err := acc.Withdraw(txID, money)
+		if err == nil {
+			return acc, nil
+		}
+		logger.WithError(err).Warn("failed to withdraw")
+
+		failed = true
+		// transaction failed
+		errTx := uc.txRepo.Exec(ctx, txID, func(tx *entity.Transaction) (*entity.Transaction, error) {
+			tx.WithdrawFailed("From account: " + err.Error())
+			return tx, nil
+		}, idempotencyKey)
+
+		return nil, errTx
+	}, idempotencyKey)
+	if failed || err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+func (uc TransactionUsecase) deposit(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
+	if accID == uuid.Nil {
+		return true, nil
+	}
+
+	var failed bool
+	logger.Infof("Depositing from %s, money: %d", accID, money)
+	idempotencyKey := txID.String() + "/deposit"
+	err := uc.accRepo.Exec(ctx, accID, func(acc *entity.Account) (*entity.Account, error) {
+		err := acc.Deposit(txID, money)
+		if err == nil {
+			return acc, nil
+		}
+		logger.WithError(err).Warn("failed to deposit")
+
+		failed = true
+		// transaction failed. Need to rollback withdraw
+		errTx := uc.txRepo.Exec(ctx, txID, func(tx *entity.Transaction) (*entity.Transaction, error) {
+			tx.DepositFailed("To account: " + err.Error())
+			return tx, nil
+		}, idempotencyKey)
+
+		return nil, errTx
+	}, idempotencyKey)
+	if failed || err != nil {
+		return false, err
+	}
+
+	return true, nil
 }
 
 func (uc TransactionUsecase) TransactionFailed(ctx context.Context, aggregateID uuid.UUID, e event.TransactionFailed) error {

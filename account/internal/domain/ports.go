@@ -65,5 +65,5 @@ type TransactionUsecaser interface {
 type TransactionRepository interface {
 	Get(ctx context.Context, id uuid.UUID) (*entity.Transaction, error)
 	CreateIfNew(ctx context.Context, agg *entity.Transaction) (bool, error)
-	Exec(ctx context.Context, id uuid.UUID, do func(*entity.Transaction) (*entity.Transaction, error)) error
+	Exec(ctx context.Context, id uuid.UUID, do func(*entity.Transaction) (*entity.Transaction, error), idempotencyKey string) error
 }

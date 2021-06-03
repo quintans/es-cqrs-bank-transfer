@@ -33,7 +33,7 @@ func (r AccountRepository) Get(ctx context.Context, id uuid.UUID) (*entity.Accou
 }
 
 func (r AccountRepository) Exec(ctx context.Context, id uuid.UUID, do func(*entity.Account) (*entity.Account, error), idempotencyKey string) error {
-	has, err := r.es.HasIdempotencyKey(ctx, eventsourcing.AggregateType(accountType), idempotencyKey)
+	has, err := r.es.HasIdempotencyKey(ctx, idempotencyKey)
 	if has || err != nil {
 		return faults.Wrap(err)
 	}
