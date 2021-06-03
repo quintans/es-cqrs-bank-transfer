@@ -183,6 +183,8 @@ func (b ProjectionUsecase) RebuildBalance(ctx context.Context, after time.Time) 
 }
 
 func (b ProjectionUsecase) RebuildWrapUp(ctx context.Context, afterEventID eventid.EventID) (eventid.EventID, error) {
+	// replay of events can be from different event stores.
+	// In this case we are only targeting one, the store that has the Account aggregate
 	p := player.New(b.esRepo)
 	afterEventID, err := p.Replay(ctx, b.Handle, afterEventID, store.WithAggregateTypes(event.AggregateType_Account))
 	if err != nil {

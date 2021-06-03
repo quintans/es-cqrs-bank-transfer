@@ -169,11 +169,12 @@ func startProjection(
 	if err != nil {
 		logger.Fatal(err)
 	}
+	memberlist.AddWorkers(workers)
 
 	// work balancer
 	latch.Add(1)
 	go func() {
-		worker.BalanceWorkers(ctx, logger, memberlist, workers, cfg.LockExpiry/2)
+		memberlist.BalanceWorkers(ctx, logger)
 		latch.Done()
 	}()
 

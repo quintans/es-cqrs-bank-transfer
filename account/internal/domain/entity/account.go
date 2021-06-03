@@ -5,6 +5,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/quintans/eventsourcing"
+	"github.com/quintans/faults"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
@@ -71,11 +72,11 @@ func (a *Account) HandleAccountCreated(e event.AccountCreated) {
 }
 
 func (a *Account) Withdraw(txID uuid.UUID, money int64) error {
-	if a.Balance < money {
-		return ErrNotEnoughFunds
-	}
 	if a.Status != event.OPEN {
-		return ErrTransactionsDisabled
+		return faults.Errorf("Status: %s: %w", a.Status, ErrTransactionsDisabled)
+	}
+	if a.Balance < money {
+		return faults.Wrap(ErrNotEnoughFunds)
 	}
 	a.ApplyChange(event.MoneyWithdrawn{
 		Money:         money,
@@ -90,7 +91,7 @@ func (a *Account) HandleMoneyWithdrawn(event event.MoneyWithdrawn) {
 
 func (a *Account) Deposit(txID uuid.UUID, money int64) error {
 	if a.Status != event.OPEN {
-		return ErrTransactionsDisabled
+		return faults.Errorf("Status: %s: %w", a.Status, ErrTransactionsDisabled)
 	}
 	a.ApplyChange(event.MoneyDeposited{
 		Money:         money,

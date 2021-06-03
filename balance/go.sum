@@ -542,8 +542,8 @@ github.com/prometheus/procfs v0.0.0-20190117184657-bf6a532e95b1/go.mod h1:c3At6R
 github.com/prometheus/procfs v0.0.2/go.mod h1:TjEm7ze935MbeOT/UhFTIMYKhuLP4wbCsTZCD3I8kEA=
 github.com/prometheus/procfs v0.0.8 h1:+fpWZdT24pJBiqJdAwYBjPSk+5YmQzYNPYzQsdzLkt8=
 github.com/prometheus/procfs v0.0.8/go.mod h1:7Qr8sr6344vo1JqZ6HhLceV9o3AJ1Ff+GxbHq6oeK9A=
-github.com/quintans/eventsourcing v0.16.0 h1:ZzkWyGGJYyHVUy9JcuAxjbKAxyqdmCYffGEWezUlrls=
-github.com/quintans/eventsourcing v0.16.0/go.mod h1:TE4hHYsL+fQ2R2fksdLWNvMUjCZfcuXvwDmkUJnTvlg=
+github.com/quintans/eventsourcing v0.16.1 h1:/qv3cxcs3XDzsPIhFCdScWrJrWD6ZbrxyKEGNA/ix74=
+github.com/quintans/eventsourcing v0.16.1/go.mod h1:TE4hHYsL+fQ2R2fksdLWNvMUjCZfcuXvwDmkUJnTvlg=
 github.com/quintans/faults v1.2.2/go.mod h1:80oBnKF99u+YGV5OYiaFUZnc1/03LHm5H+8gOyqpZUw=
 github.com/quintans/faults v1.3.0 h1:RdCOqhXRsibnJ/SfMNptohEpn3xD5donaY3fBo5yy78=
 github.com/quintans/faults v1.3.0/go.mod h1:80oBnKF99u+YGV5OYiaFUZnc1/03LHm5H+8gOyqpZUw=

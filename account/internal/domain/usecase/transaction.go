@@ -49,6 +49,7 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 	})
 
 	if e.From != uuid.Nil {
+		var failed bool
 		logger.Infof("Withdrawing from %s, money: %d", e.From, e.Money)
 		err := uc.accRepo.Exec(ctx, e.From, func(acc *entity.Account) (*entity.Account, error) {
 			err := acc.Withdraw(e.ID, e.Money)
@@ -56,19 +57,22 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 				return acc, nil
 			}
 
+			failed = true
 			// transaction failed
-			err = uc.txRepo.Exec(ctx, e.ID, func(t *entity.Transaction) (*entity.Transaction, error) {
-				t.WithdrawFailed("From account: " + err.Error())
-				return t, nil
+			errTx := uc.txRepo.Exec(ctx, e.ID, func(tx *entity.Transaction) (*entity.Transaction, error) {
+				tx.WithdrawFailed("From account: " + err.Error())
+				return tx, nil
 			})
 
-			return nil, err
-		}, e.ID.String()+"_withdraw")
-		if err != nil {
+			return nil, errTx
+		}, e.ID.String()+"/withdraw")
+		if failed || err != nil {
 			return err
 		}
 	}
+
 	if e.To != uuid.Nil {
+		var failed bool
 		logger.Infof("Depositing from %s, money: %d", e.From, e.Money)
 		err := uc.accRepo.Exec(ctx, e.To, func(acc *entity.Account) (*entity.Account, error) {
 			err := acc.Deposit(e.ID, e.Money)
@@ -76,15 +80,16 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 				return acc, nil
 			}
 
+			failed = true
 			// transaction failed. Need to rollback withdraw
-			err = uc.txRepo.Exec(ctx, e.ID, func(t *entity.Transaction) (*entity.Transaction, error) {
-				t.DepositFailed("To account: " + err.Error())
-				return t, nil
+			errTx := uc.txRepo.Exec(ctx, e.ID, func(tx *entity.Transaction) (*entity.Transaction, error) {
+				tx.DepositFailed("To account: " + err.Error())
+				return tx, nil
 			})
 
-			return nil, err
-		}, e.ID.String()+"_deposit")
-		if err != nil {
+			return nil, errTx
+		}, e.ID.String()+"/deposit")
+		if failed || err != nil {
 			return err
 		}
 	}
@@ -105,9 +110,9 @@ func (uc TransactionUsecase) TransactionFailed(ctx context.Context, aggregateID 
 	if err != nil {
 		return err
 	}
-	err = uc.accRepo.Exec(ctx, tx.From, func(a *entity.Account) (*entity.Account, error) {
-		err := a.Deposit(tx.ID, tx.Money)
-		return a, err
+	err = uc.accRepo.Exec(ctx, tx.From, func(acc *entity.Account) (*entity.Account, error) {
+		err := acc.Deposit(tx.ID, tx.Money)
+		return acc, err
 	}, tx.ID.String()+"/rollback")
 
 	return err
