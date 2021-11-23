@@ -32,7 +32,6 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/gateway/esdb"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
 
 type Config struct {
@@ -77,7 +76,7 @@ func Setup(cfg *Config, logger log.Logger) {
 	if err != nil {
 		logger.Fatal(err)
 	}
-	es := eventsourcing.NewEventStore(esRepo, cfg.SnapshotThreshold, entity.AggregateFactory{})
+	es := eventsourcing.NewEventStore(esRepo, entity.AggregateFactory{}, eventsourcing.WithSnapshotThreshold(cfg.SnapshotThreshold))
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -94,7 +93,7 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	txRepo := esdb.NewTransactionRepository(es)
 	txUC := usecase.NewTransactionUsecase(logger, txRepo, accRepo)
-	reactor := controller.NewListener(logger, txUC, event.EventFactory{}, eventsourcing.JSONCodec{})
+	reactor := controller.NewListener(logger, txUC, entity.AggregateFactory{}, eventsourcing.JSONCodec{})
 
 	c := controller.NewRestController(accUC, txUC)
 

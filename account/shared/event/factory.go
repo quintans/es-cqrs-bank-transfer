@@ -7,7 +7,7 @@ import (
 
 type EventFactory struct{}
 
-func (EventFactory) New(kind string) (eventsourcing.Typer, error) {
+func (EventFactory) NewEvent(kind eventsourcing.EventKind) (eventsourcing.Typer, error) {
 	var e eventsourcing.Typer
 	switch kind {
 	case Event_AccountCreated:

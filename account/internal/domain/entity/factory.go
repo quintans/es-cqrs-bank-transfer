@@ -11,22 +11,13 @@ type AggregateFactory struct {
 	event.EventFactory
 }
 
-func (f AggregateFactory) New(kind string) (eventsourcing.Typer, error) {
-	var e eventsourcing.Typer
+func (f AggregateFactory) NewAggregate(kind eventsourcing.AggregateType) (eventsourcing.Aggregater, error) {
 	switch kind {
 	case event.AggregateType_Account:
-		e = NewAccount()
+		return NewAccount(), nil
 	case event.AggregateType_Transaction:
-		e = NewTransaction()
+		return NewTransaction(), nil
 	default:
-		evt, err := f.EventFactory.New(kind)
-		if err != nil {
-			return nil, err
-		}
-		return evt, nil
+		return nil, faults.Errorf("unknown aggregate type: %s", kind)
 	}
-	if e == nil {
-		return nil, faults.Errorf("Unknown aggregate kind: %s", kind)
-	}
-	return e, nil
 }
