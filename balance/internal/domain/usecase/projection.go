@@ -22,7 +22,7 @@ var ErrAggregateNotFound = errors.New("aggregate Not Found")
 
 type ProjectionUsecase struct {
 	balanceRepository domain.BalanceRepository
-	factory           eventsourcing.Factory
+	factory           eventsourcing.EventFactory
 	codec             eventsourcing.Codec
 	upcaster          eventsourcing.Upcaster
 	esRepo            player.Repository
@@ -30,7 +30,7 @@ type ProjectionUsecase struct {
 
 func NewProjectionUsecase(
 	balanceRepository domain.BalanceRepository,
-	factory eventsourcing.Factory,
+	factory eventsourcing.EventFactory,
 	codec eventsourcing.Codec,
 	upcaster eventsourcing.Upcaster,
 	esRepo player.Repository,

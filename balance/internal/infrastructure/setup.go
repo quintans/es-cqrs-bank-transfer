@@ -133,7 +133,7 @@ func startProjection(
 	}
 
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
-	pool, err := locks.NewConsulLockPool(cfg.ConsulURL)
+	pool, err := lock.NewConsulLockPool(cfg.ConsulURL)
 	if err != nil {
 		logger.Fatal("Error instantiating Locker: %v", err)
 	}
