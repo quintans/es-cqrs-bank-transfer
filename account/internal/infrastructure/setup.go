@@ -106,8 +106,9 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	// event forwarding
 	latch.Add(1)
-	memberlist.AddWorkers(eventForwarderWorkers(ctx, logger, latch, connStr, pool, cfg))
-	memberlist.AddWorkers(reactorConsumerWorkers(ctx, logger, pool, connStr, cfg, reactor.Handler))
+	workers := eventForwarderWorkers(ctx, logger, latch, connStr, pool, cfg)
+	workers = append(workers, reactorConsumerWorkers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
+	balancer := worker.NewBalancer("account", logger, memberlist, workers, cfg.LockExpiry/2)
 
 	latch.Add(1)
 	go func() {
@@ -117,7 +118,7 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	latch.Add(1)
 	go func() {
-		memberlist.BalanceWorkers(ctx, logger)
+		<-balancer.Start(ctx)
 		latch.Done()
 	}()
 
@@ -187,7 +188,8 @@ func reactorConsumerWorkers(ctx context.Context, logger log.Logger, lockPool loc
 		logger.Fatalf("Error creating NATS subscriber: %+v", err)
 	}
 
-	return projection.ReactorConsumerWorkers(ctx, logger, streamName, lockFact, cfg.Topic, cfg.Partitions, natsSub, handler)
+	workers, _ := projection.ReactorConsumerWorkers(ctx, logger, streamName, lockFact, cfg.Topic, cfg.Partitions, natsSub, handler)
+	return workers
 }
 
 func startRestServer(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, c controller.RestController, port int) {
