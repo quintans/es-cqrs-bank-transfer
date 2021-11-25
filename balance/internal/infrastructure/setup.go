@@ -32,7 +32,8 @@ import (
 )
 
 const (
-	NotificationTopic = "notifications"
+	NotificationTopic     = "notifications"
+	BalanceProjectionName = "balance"
 )
 
 var logger = log.NewLogrus(logrus.StandardLogger())
@@ -120,6 +121,10 @@ func waitForElastic(es *elasticsearch.Client) {
 	logger.Info("Elasticsearch info: ", res)
 }
 
+// startProjection creates workers that listen to events coming through the event bus,
+// forwarding them to the projection handler.
+// The number of workers will be equal to the number of partitions.
+// These workers manage the connection with the partition subscribers and the recording of the stream resumer value.
 func startProjection(
 	ctx context.Context,
 	cfg Config,
@@ -127,54 +132,58 @@ func startProjection(
 	repo domain.BalanceRepository,
 	esRepo player.Repository,
 ) controller.ProjectionBalance {
-	natsNotifier, err := subscriber.NewNatsProjectionSubscriber(ctx, logger, cfg.NatsURL, NotificationTopic)
+	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
+	lockPool, err := lock.NewConsulLockPool(cfg.ConsulURL)
+	if err != nil {
+		logger.Fatal("Error instantiating Locker: %v", err)
+	}
+
+	natsCanceller, err := subscriber.NewNatsProjectionSubscriber(ctx, logger, cfg.NatsURL, NotificationTopic)
 	if err != nil {
 		logger.Fatalf("Error creating NATS subscriber: %s", err)
 	}
 
-	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
-	pool, err := lock.NewConsulLockPool(cfg.ConsulURL)
-	if err != nil {
-		logger.Fatal("Error instantiating Locker: %v", err)
+	lockFact := func(lockName string) lock.Locker {
+		return lockPool.NewLock(lockName, cfg.LockExpiry)
 	}
 
 	streamResumer, err := resumestore.NewElasticSearchStreamResumer(cfg.ElasticURL, "stream_resume")
 	if err != nil {
 		logger.Fatal("Error instantiating Locker: %v", err)
 	}
-	natsSub, err := subscriber.NewNatsSubscriber(ctx, logger, cfg.NatsURL, "test-cluster", "balance-"+uuid.New().String(), streamResumer)
-	if err != nil {
-		logger.Fatalf("Error creating NATS subscriber: %s", err)
-	}
 
-	lockFactory := func(lockName string) lock.Locker {
-		return pool.NewLock(lockName, cfg.LockExpiry)
+	natsPartitionSubscriber, err := subscriber.NewNatsSubscriber(ctx, logger, cfg.NatsURL, "test-cluster", BalanceProjectionName+"-"+uuid.New().String(), streamResumer)
+	if err != nil {
+		logger.Fatalf("Error creating NATS subscriber: %+v", err)
 	}
 
 	prjUC := usecase.NewProjectionUsecase(repo, event.EventFactory{}, eventsourcing.JSONCodec{}, nil, esRepo)
-	workers, rebuilder := projection.ProjectionWorkersAndRebuilder(
-		logger,
-		"balance",
-		lockFactory,
-		natsNotifier,
-		natsSub,
-		streamResumer,
-		cfg.Topic,
-		cfg.Partitions,
-		prjUC.Handle,
-	)
-	prjCtrl := controller.NewProjectionBalance(prjUC, rebuilder)
-
-	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "balance-member", cfg.LockExpiry)
+	// create workers according to the topic that we want to listen
+	workers, tokenStreams := projection.ReactorConsumerWorkers(ctx, logger, BalanceProjectionName, lockFact, cfg.Topic, cfg.Partitions, natsPartitionSubscriber, prjUC.Handle)
+	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, BalanceProjectionName+"-member", cfg.LockExpiry)
 	if err != nil {
 		logger.Fatal(err)
 	}
-	memberlist.AddWorkers(workers)
+	balancer := worker.NewBalancer(BalanceProjectionName, logger, memberlist, workers, cfg.LockExpiry/2)
+
+	unlockWaiter := lockPool.NewLock(BalanceProjectionName+"-freeze", cfg.LockExpiry)
+	startStop := projection.NewStartStopBalancer(logger, unlockWaiter, natsCanceller, *balancer)
+
+	rebuilder := projection.NewNotifierLockRestarter(
+		logger,
+		unlockWaiter,
+		natsCanceller,
+		natsPartitionSubscriber,
+		streamResumer,
+		tokenStreams,
+		memberlist,
+	)
+	prjCtrl := controller.NewProjectionBalance(prjUC, rebuilder)
 
 	// work balancer
 	latch.Add(1)
 	go func() {
-		memberlist.BalanceWorkers(ctx, logger)
+		startStop.Run(context.Background())
 		latch.Done()
 	}()
 
