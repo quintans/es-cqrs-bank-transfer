@@ -16,6 +16,7 @@ import (
 	"github.com/nats-io/stan.go"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/lock"
+	"github.com/quintans/eventsourcing/lock/consullock"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/player"
 	"github.com/quintans/eventsourcing/projection"
@@ -80,7 +81,7 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	pool, err := lock.NewConsulLockPool(cfg.ConsulURL)
+	pool, err := consullock.NewPool(cfg.ConsulURL)
 	if err != nil {
 		logger.Fatalf("Error instantiating Locker: %+v", err)
 	}
@@ -108,7 +109,7 @@ func Setup(cfg *Config, logger log.Logger) {
 	latch.Add(1)
 	workers := eventForwarderWorkers(ctx, logger, latch, connStr, pool, cfg)
 	workers = append(workers, reactorConsumerWorkers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
-	balancer := worker.NewBalancer("account", logger, memberlist, workers, cfg.LockExpiry/2)
+	balancer := worker.NewBalancer(logger, "account", memberlist, workers, cfg.LockExpiry/2)
 
 	latch.Add(1)
 	go func() {
@@ -136,7 +137,7 @@ func Setup(cfg *Config, logger log.Logger) {
 // eventForwarderWorkers creates workers that listen to database changes,
 // transform them to events and publish them into the message bus.
 // Partitions will be grouped in slots, and that will determine the number of workers.
-func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, connStr string, lockPool lock.ConsulLockPool, cfg *Config) []worker.Worker {
+func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, connStr string, lockPool consullock.Pool, cfg *Config) []worker.Worker {
 	partitionSlots, err := worker.ParseSlots(cfg.Forwarder.PartitionSlots)
 	if err != nil {
 		logger.Fatal(err)
@@ -173,7 +174,7 @@ func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.
 // reactorConsumerWorkers creates workers that listen to events coming through the event bus,
 // forwarding them to an handler. This is the same approache used for projections, but for the write side of things.
 // The number of workers will be equal to the number of partitions.
-func reactorConsumerWorkers(ctx context.Context, logger log.Logger, lockPool lock.ConsulLockPool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
+func reactorConsumerWorkers(ctx context.Context, logger log.Logger, lockPool consullock.Pool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
 	lockFact := func(lockName string) lock.Locker {
 		return lockPool.NewLock(lockName, cfg.LockExpiry)
 	}
