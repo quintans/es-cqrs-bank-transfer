@@ -19,6 +19,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/lock"
+	"github.com/quintans/eventsourcing/lock/consullock"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/player"
 	"github.com/quintans/eventsourcing/projection"
@@ -133,7 +134,7 @@ func startProjection(
 	esRepo player.Repository,
 ) controller.ProjectionBalance {
 	// if we used partitioned topic, we would not need a locker, since each instance would be the only one responsible for a partion range
-	lockPool, err := lock.NewConsulLockPool(cfg.ConsulURL)
+	lockPool, err := consullock.NewPool(cfg.ConsulURL)
 	if err != nil {
 		logger.Fatal("Error instantiating Locker: %v", err)
 	}
@@ -164,7 +165,7 @@ func startProjection(
 	if err != nil {
 		logger.Fatal(err)
 	}
-	balancer := worker.NewBalancer(BalanceProjectionName, logger, memberlist, workers, cfg.LockExpiry/2)
+	balancer := worker.NewBalancer(logger, BalanceProjectionName, memberlist, workers, cfg.LockExpiry/2)
 
 	unlockWaiter := lockPool.NewLock(BalanceProjectionName+"-freeze", cfg.LockExpiry)
 	startStop := projection.NewStartStopBalancer(logger, unlockWaiter, natsCanceller, *balancer)
