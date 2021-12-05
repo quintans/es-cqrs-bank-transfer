@@ -10,7 +10,6 @@ import (
 
 	"github.com/elastic/go-elasticsearch/v7"
 	"github.com/elastic/go-elasticsearch/v7/esapi"
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
@@ -18,13 +17,10 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
 	"github.com/quintans/eventsourcing"
-	"github.com/quintans/eventsourcing/lock"
 	"github.com/quintans/eventsourcing/lock/consullock"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/player"
-	"github.com/quintans/eventsourcing/projection"
-	"github.com/quintans/eventsourcing/projection/resumestore"
-	"github.com/quintans/eventsourcing/subscriber"
+	"github.com/quintans/eventsourcing/stream/nats"
 	"github.com/quintans/eventsourcing/worker"
 	"github.com/quintans/toolkit/locks"
 	"github.com/sirupsen/logrus"
@@ -138,53 +134,37 @@ func startProjection(
 	if err != nil {
 		logger.Fatal("Error instantiating Locker: %v", err)
 	}
+	locker := lockPool.NewLock(BalanceProjectionName+"-freeze", cfg.LockExpiry)
 
-	natsCanceller, err := subscriber.NewNatsProjectionSubscriber(ctx, logger, cfg.NatsURL, NotificationTopic)
-	if err != nil {
-		logger.Fatalf("Error creating NATS subscriber: %s", err)
-	}
-
-	lockFact := func(lockName string) lock.Locker {
-		return lockPool.NewLock(lockName, cfg.LockExpiry)
-	}
-
-	streamResumer, err := resumestore.NewElasticSearchStreamResumer(cfg.ElasticURL, "stream_resume")
-	if err != nil {
-		logger.Fatal("Error instantiating Locker: %v", err)
-	}
-
-	natsPartitionSubscriber, err := subscriber.NewNatsSubscriber(ctx, logger, cfg.NatsURL, "test-cluster", BalanceProjectionName+"-"+uuid.New().String(), streamResumer)
-	if err != nil {
-		logger.Fatalf("Error creating NATS subscriber: %+v", err)
-	}
-
-	prjUC := usecase.NewProjectionUsecase(repo, event.EventFactory{}, eventsourcing.JSONCodec{}, nil, esRepo)
-	// create workers according to the topic that we want to listen
-	workers, tokenStreams := projection.ReactorConsumerWorkers(ctx, logger, BalanceProjectionName, lockFact, cfg.Topic, cfg.Partitions, natsPartitionSubscriber, prjUC.Handle)
+	// tracks running service instances
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, BalanceProjectionName+"-member", cfg.LockExpiry)
 	if err != nil {
 		logger.Fatal(err)
 	}
-	balancer := worker.NewBalancer(logger, BalanceProjectionName, memberlist, workers, cfg.LockExpiry/2)
 
-	unlockWaiter := lockPool.NewLock(BalanceProjectionName+"-freeze", cfg.LockExpiry)
-	startStop := projection.NewStartStopBalancer(logger, unlockWaiter, natsCanceller, *balancer)
+	prjUC := usecase.NewProjectionUsecase(repo, event.EventFactory{}, eventsourcing.JSONCodec{}, nil, esRepo)
 
-	rebuilder := projection.NewNotifierLockRestarter(
+	rebuilder, startStop, err := nats.NewProjection(
+		ctx,
 		logger,
-		unlockWaiter,
-		natsCanceller,
-		natsPartitionSubscriber,
-		streamResumer,
-		tokenStreams,
+		cfg.NatsURL,
+		locker,
+		locker,
 		memberlist,
+		BalanceProjectionName,
+		cfg.Topic,
+		cfg.Partitions,
+		prjUC.Handle,
 	)
+	if err != nil {
+		logger.Fatalf("Could not instantiate NATS client: %w", err)
+	}
+
 	prjCtrl := controller.NewProjectionBalance(prjUC, rebuilder)
 
-	// work balancer
 	latch.Add(1)
 	go func() {
-		startStop.Run(context.Background())
+		startStop.Run(ctx)
 		latch.Done()
 	}()
 

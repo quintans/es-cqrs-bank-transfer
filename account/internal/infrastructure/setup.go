@@ -13,18 +13,15 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"github.com/nats-io/stan.go"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/lock"
 	"github.com/quintans/eventsourcing/lock/consullock"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/player"
 	"github.com/quintans/eventsourcing/projection"
-	"github.com/quintans/eventsourcing/projection/resumestore"
-	"github.com/quintans/eventsourcing/sink"
 	"github.com/quintans/eventsourcing/store"
 	"github.com/quintans/eventsourcing/store/mongodb"
-	"github.com/quintans/eventsourcing/subscriber"
+	"github.com/quintans/eventsourcing/stream/nats"
 	"github.com/quintans/eventsourcing/worker"
 	"github.com/quintans/faults"
 	"github.com/quintans/toolkit/locks"
@@ -81,11 +78,6 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	pool, err := consullock.NewPool(cfg.ConsulURL)
-	if err != nil {
-		logger.Fatalf("Error instantiating Locker: %+v", err)
-	}
-
 	// Repository
 	accRepo := esdb.NewAccountRepository(es)
 
@@ -106,16 +98,11 @@ func Setup(cfg *Config, logger log.Logger) {
 	latch := locks.NewCountDownLatch()
 
 	// event forwarding
-	latch.Add(1)
-	workers := eventForwarderWorkers(ctx, logger, latch, connStr, pool, cfg)
-	workers = append(workers, reactorConsumerWorkers(ctx, logger, pool, connStr, cfg, reactor.Handler)...)
-	balancer := worker.NewBalancer(logger, "account", memberlist, workers, cfg.LockExpiry/2)
-
-	latch.Add(1)
-	go func() {
-		player.StartGrpcServer(ctx, cfg.GrpcAddress, esRepo)
-		latch.Done()
-	}()
+	workers := eventForwarderWorkers(ctx, logger, latch, connStr, cfg)
+	balancer := worker.NewMembersBalancer(logger, "account", memberlist, workers, cfg.LockExpiry/2)
+	if err := reactorConsumerWorkers(ctx, logger, latch, cfg, reactor.Handler); err != nil {
+		logger.Fatal(err)
+	}
 
 	latch.Add(1)
 	go func() {
@@ -123,9 +110,18 @@ func Setup(cfg *Config, logger log.Logger) {
 		latch.Done()
 	}()
 
+	latch.Add(1)
+	go func() {
+		player.StartGrpcServer(ctx, cfg.GrpcAddress, esRepo)
+		latch.Done()
+	}()
+
 	// Rest server
 	latch.Add(1)
-	go startRestServer(ctx, logger, latch, c, cfg.ApiPort)
+	go func() {
+		startRestServer(ctx, logger, c, cfg.ApiPort)
+		latch.Done()
+	}()
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
@@ -137,7 +133,12 @@ func Setup(cfg *Config, logger log.Logger) {
 // eventForwarderWorkers creates workers that listen to database changes,
 // transform them to events and publish them into the message bus.
 // Partitions will be grouped in slots, and that will determine the number of workers.
-func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, connStr string, lockPool consullock.Pool, cfg *Config) []worker.Worker {
+func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, connStr string, cfg *Config) []worker.Worker {
+	lockPool, err := consullock.NewPool(cfg.ConsulURL)
+	if err != nil {
+		logger.Fatalf("Error instantiating Locker: %+v", err)
+	}
+
 	partitionSlots, err := worker.ParseSlots(cfg.Forwarder.PartitionSlots)
 	if err != nil {
 		logger.Fatal(err)
@@ -158,10 +159,11 @@ func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.
 	const name = "forwarder"
 	// sinker provider
 	clientID := name + "-" + uuid.New().String()
-	sinker, err := sink.NewNatsSink(logger, cfg.Topic, partitions, "test-cluster", clientID, stan.NatsURL(cfg.NatsURL))
+	sinker, err := nats.NewSink(logger, cfg.Topic, partitions, cfg.NatsURL)
 	if err != nil {
 		logger.Fatalf("Error initialising NATS (%s) Sink '%s' on boot: %+v", cfg.NatsURL, clientID, err)
 	}
+	latch.Add(1)
 	go func() {
 		<-ctx.Done()
 		sinker.Close()
@@ -174,28 +176,23 @@ func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.
 // reactorConsumerWorkers creates workers that listen to events coming through the event bus,
 // forwarding them to an handler. This is the same approache used for projections, but for the write side of things.
 // The number of workers will be equal to the number of partitions.
-func reactorConsumerWorkers(ctx context.Context, logger log.Logger, lockPool consullock.Pool, dbURL string, cfg *Config, handler projection.EventHandlerFunc) []worker.Worker {
-	lockFact := func(lockName string) lock.Locker {
-		return lockPool.NewLock(lockName, cfg.LockExpiry)
-	}
-
-	streamResumer, err := resumestore.NewMongoDBStreamResumer(dbURL, cfg.EsName, "stream_resume")
-	if err != nil {
-		logger.Fatal("Error instantiating Locker: %+v", err)
-	}
+func reactorConsumerWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, cfg *Config, handler projection.EventHandlerFunc) error {
 	const streamName = "accounts-reactor"
-	natsSub, err := subscriber.NewNatsSubscriber(ctx, logger, cfg.NatsURL, "test-cluster", streamName+"-"+uuid.New().String(), streamResumer)
+	done, err := nats.NewReactor(ctx, logger, cfg.NatsURL, streamName, cfg.Topic, cfg.Partitions, handler)
 	if err != nil {
-		logger.Fatalf("Error creating NATS subscriber: %+v", err)
+		return err
 	}
 
-	workers, _ := projection.ReactorConsumerWorkers(ctx, logger, streamName, lockFact, cfg.Topic, cfg.Partitions, natsSub, handler)
-	return workers
+	latch.Add(1)
+	go func() {
+		<-done
+		latch.Done()
+	}()
+
+	return nil
 }
 
-func startRestServer(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, c controller.RestController, port int) {
-	defer latch.Done()
-
+func startRestServer(ctx context.Context, logger log.Logger, c controller.RestController, port int) {
 	// Echo instance
 	e := echo.New()
 
