@@ -10,7 +10,6 @@ import (
 
 	"github.com/golang-migrate/migrate/v4"
 	mg "github.com/golang-migrate/migrate/v4/database/mongodb"
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/quintans/eventsourcing"
@@ -19,7 +18,6 @@ import (
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/player"
 	"github.com/quintans/eventsourcing/projection"
-	"github.com/quintans/eventsourcing/store"
 	"github.com/quintans/eventsourcing/store/mongodb"
 	"github.com/quintans/eventsourcing/stream/nats"
 	"github.com/quintans/eventsourcing/worker"
@@ -106,7 +104,9 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	latch.Add(1)
 	go func() {
-		<-balancer.Start(ctx)
+		balancer.Start(ctx)
+		<-ctx.Done()
+		balancer.Stop(context.Background(), false)
 		latch.Done()
 	}()
 
@@ -152,17 +152,15 @@ func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.
 	lockFact := func(lockName string) lock.Locker {
 		return lockPool.NewLock(lockName, cfg.LockExpiry)
 	}
-	feederFact := func(partitionLow, partitionHi uint32) store.Feeder {
-		return mongodb.NewFeed(logger, connStr, cfg.EsName, mongodb.WithPartitions(partitions, partitionLow, partitionHi))
-	}
-
-	const name = "forwarder"
 	// sinker provider
-	clientID := name + "-" + uuid.New().String()
 	sinker, err := nats.NewSink(logger, cfg.Topic, partitions, cfg.NatsURL)
 	if err != nil {
-		logger.Fatalf("Error initialising NATS (%s) Sink '%s' on boot: %+v", cfg.NatsURL, clientID, err)
+		logger.Fatalf("Error initialising NATS (%s) Sink '%s' on boot: %+v", cfg.NatsURL, cfg.Topic, err)
 	}
+	taskerFactory := func(partitionLow, partitionHi uint32) worker.Tasker {
+		return mongodb.NewFeed(logger, connStr, cfg.EsName, sinker, mongodb.WithPartitions(partitions, partitionLow, partitionHi))
+	}
+
 	latch.Add(1)
 	go func() {
 		<-ctx.Done()
@@ -170,7 +168,7 @@ func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.
 		latch.Done()
 	}()
 
-	return projection.EventForwarderWorkers(ctx, logger, name, lockFact, feederFact, sinker, partitionSlots)
+	return projection.EventForwarderWorkers(ctx, logger, "forwarder", lockFact, taskerFactory, partitionSlots)
 }
 
 // reactorConsumerWorkers creates workers that listen to events coming through the event bus,

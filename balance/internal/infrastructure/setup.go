@@ -17,9 +17,11 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
 	"github.com/quintans/eventsourcing"
+	"github.com/quintans/eventsourcing/lock"
 	"github.com/quintans/eventsourcing/lock/consullock"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/player"
+	esElasticsearch "github.com/quintans/eventsourcing/store/elasticsearch"
 	"github.com/quintans/eventsourcing/stream/nats"
 	"github.com/quintans/eventsourcing/worker"
 	"github.com/quintans/toolkit/locks"
@@ -134,7 +136,9 @@ func startProjection(
 	if err != nil {
 		logger.Fatal("Error instantiating Locker: %v", err)
 	}
-	locker := lockPool.NewLock(BalanceProjectionName+"-freeze", cfg.LockExpiry)
+	lockerFactory := func(name string) lock.WaitLocker {
+		return lockPool.NewLock(name, cfg.LockExpiry)
+	}
 
 	// tracks running service instances
 	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, BalanceProjectionName+"-member", cfg.LockExpiry)
@@ -144,20 +148,18 @@ func startProjection(
 
 	prjUC := usecase.NewProjectionUsecase(repo, event.EventFactory{}, eventsourcing.JSONCodec{}, nil, esRepo)
 
-	rebuilder, startStop, err := nats.NewProjection(
-		ctx,
-		logger,
-		cfg.NatsURL,
-		locker,
-		locker,
-		memberlist,
-		BalanceProjectionName,
-		cfg.Topic,
-		cfg.Partitions,
-		prjUC.Handle,
-	)
+	resumeStore, err := esElasticsearch.NewElasticSearchStreamResumer(cfg.ElasticURL, "stream_resume")
 	if err != nil {
-		logger.Fatalf("Could not instantiate NATS client: %w", err)
+		logger.Fatal("Error instantiating resume store: %v", err)
+	}
+	projector, err := nats.NewProjector(ctx, logger, cfg.NatsURL, lockerFactory, memberlist, resumeStore, BalanceProjectionName)
+	if err != nil {
+		logger.Fatalf("Could not instantiate NATS projector: %w", err)
+	}
+	projector.AddTopicHandler(cfg.Topic, cfg.Partitions, prjUC.Handle)
+	rebuilder, startStop, err := projector.Projection(ctx)
+	if err != nil {
+		logger.Fatalf("Could not create projection: %w", err)
 	}
 
 	prjCtrl := controller.NewProjectionBalance(prjUC, rebuilder)

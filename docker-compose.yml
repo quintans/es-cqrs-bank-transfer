@@ -9,6 +9,8 @@ services:
   #   build: 
   #     context: ./account
   #     # dockerfile: ./Dockerfile
+  #   deploy:
+  #     replicas: 3
   #   depends_on:
   #     - mongo
   #     - nats
@@ -32,6 +34,8 @@ services:
   #   build: 
   #     context: ./balance
   #     # dockerfile: ./Dockerfile
+  #   deploy:
+  #     replicas: 3
   #   depends_on:
   #     - nats
   #     - elastic
@@ -49,10 +53,12 @@ services:
   #     - 8030:8030
 
   nats:
-    image: nats-streaming
+    image: nats:2.6.6
+    command: -js
     ports:
       - "4222:4222"
       - "8222:8222"
+      - "6222:6222"
     networks:
       - my-network
 
