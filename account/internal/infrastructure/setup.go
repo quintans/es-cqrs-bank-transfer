@@ -40,15 +40,9 @@ type Config struct {
 	LockExpiry time.Duration `env:"LOCK_EXPIRY" envDefault:"10s"`
 	NatsURL    string        `env:"NATS_URL"`
 
-	Partitions uint32 `env:"PARTITIONS"`
-	Topic      string `env:"TOPIC" envDefault:"accounts"`
+	Topic string `env:"TOPIC" envDefault:"accounts"`
 
 	ConfigEs
-	Forwarder ConfigForwarder
-}
-
-type ConfigForwarder struct {
-	PartitionSlots []string `env:"PARTITION_SLOTS" envSeparator:","`
 }
 
 type ConfigEs struct {
@@ -74,8 +68,6 @@ func Setup(cfg *Config, logger log.Logger) {
 	}
 	es := eventsourcing.NewEventStore(esRepo, entity.AggregateFactory{}, eventsourcing.WithSnapshotThreshold(cfg.SnapshotThreshold))
 
-	ctx, cancel := context.WithCancel(context.Background())
-
 	// Repository
 	accRepo := esdb.NewAccountRepository(es)
 
@@ -88,27 +80,12 @@ func Setup(cfg *Config, logger log.Logger) {
 
 	c := controller.NewRestController(accUC, txUC)
 
-	memberlist, err := worker.NewConsulMemberList(cfg.ConsulURL, "forwarder-member", cfg.LockExpiry)
-	if err != nil {
-		logger.Fatal(err)
-	}
-
 	latch := locks.NewCountDownLatch()
 
-	// event forwarding
-	workers := eventForwarderWorkers(ctx, logger, latch, connStr, cfg)
-	balancer := worker.NewMembersBalancer(logger, "account", memberlist, workers, cfg.LockExpiry/2)
-	if err := reactorConsumerWorkers(ctx, logger, latch, cfg, reactor.Handler); err != nil {
-		logger.Fatal(err)
-	}
+	ctx, cancel := context.WithCancel(context.Background())
 
-	latch.Add(1)
-	go func() {
-		balancer.Start(ctx)
-		<-ctx.Done()
-		balancer.Stop(context.Background(), false)
-		latch.Done()
-	}()
+	// event forwarding
+	eventForwarderWorkers(ctx, logger, latch, connStr, cfg)
 
 	latch.Add(1)
 	go func() {
@@ -123,6 +100,11 @@ func Setup(cfg *Config, logger log.Logger) {
 		latch.Done()
 	}()
 
+	// reactor
+	if err := reactorConsumerWorkers(ctx, logger, latch, cfg, reactor.Handler); err != nil {
+		logger.Fatal(err)
+	}
+
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-quit
@@ -133,33 +115,21 @@ func Setup(cfg *Config, logger log.Logger) {
 // eventForwarderWorkers creates workers that listen to database changes,
 // transform them to events and publish them into the message bus.
 // Partitions will be grouped in slots, and that will determine the number of workers.
-func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, connStr string, cfg *Config) []worker.Worker {
+func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, connStr string, cfg *Config) {
 	lockPool, err := consullock.NewPool(cfg.ConsulURL)
 	if err != nil {
 		logger.Fatalf("Error instantiating Locker: %+v", err)
-	}
-
-	partitionSlots, err := worker.ParseSlots(cfg.Forwarder.PartitionSlots)
-	if err != nil {
-		logger.Fatal(err)
-	}
-	var partitions uint32
-	for _, v := range partitionSlots {
-		if v.To > partitions {
-			partitions = v.To
-		}
 	}
 	lockFact := func(lockName string) lock.Locker {
 		return lockPool.NewLock(lockName, cfg.LockExpiry)
 	}
 	// sinker provider
-	sinker, err := nats.NewSink(logger, cfg.Topic, partitions, cfg.NatsURL)
+	sinker, err := nats.NewSink(logger, cfg.Topic, 1, cfg.NatsURL)
 	if err != nil {
 		logger.Fatalf("Error initialising NATS (%s) Sink '%s' on boot: %+v", cfg.NatsURL, cfg.Topic, err)
 	}
-	taskerFactory := func(partitionLow, partitionHi uint32) worker.Tasker {
-		return mongodb.NewFeed(logger, connStr, cfg.EsName, sinker, mongodb.WithPartitions(partitions, partitionLow, partitionHi))
-	}
+
+	feed := mongodb.NewFeed(logger, connStr, cfg.EsName, sinker)
 
 	latch.Add(1)
 	go func() {
@@ -168,7 +138,15 @@ func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.
 		latch.Done()
 	}()
 
-	return projection.EventForwarderWorkers(ctx, logger, "forwarder", lockFact, taskerFactory, partitionSlots)
+	forwarder := projection.EventForwarderWorker(ctx, logger, "forwarder", lockFact, feed)
+	balancer := worker.NewSingleBalancer(logger, "account", forwarder, cfg.LockExpiry/2)
+	latch.Add(1)
+	go func() {
+		balancer.Start(ctx)
+		<-ctx.Done()
+		balancer.Stop(context.Background())
+		latch.Done()
+	}()
 }
 
 // reactorConsumerWorkers creates workers that listen to events coming through the event bus,
@@ -176,7 +154,7 @@ func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.
 // The number of workers will be equal to the number of partitions.
 func reactorConsumerWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, cfg *Config, handler projection.EventHandlerFunc) error {
 	const streamName = "accounts-reactor"
-	done, err := nats.NewReactor(ctx, logger, cfg.NatsURL, streamName, cfg.Topic, cfg.Partitions, handler)
+	done, err := nats.NewReactor(ctx, logger, cfg.NatsURL, streamName, cfg.Topic, 1, handler)
 	if err != nil {
 		return err
 	}

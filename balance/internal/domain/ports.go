@@ -2,7 +2,6 @@ package domain
 
 import (
 	"context"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
@@ -22,8 +21,8 @@ type LastIDs struct {
 }
 
 type ProjectionUsecase interface {
-	RebuildBalance(ctx context.Context, after time.Time) (eventid.EventID, error)
-	RebuildWrapUp(ctx context.Context, afterEventID eventid.EventID) (eventid.EventID, error)
+	CatchUp(ctx context.Context) (eventid.EventID, error)
+	AfterCatchUp(ctx context.Context, afterEventID eventid.EventID) (eventid.EventID, error)
 }
 
 type BalanceUsecase interface {
