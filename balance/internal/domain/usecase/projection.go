@@ -10,8 +10,8 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/common"
-	"github.com/quintans/eventsourcing/eventid"
 	"github.com/quintans/eventsourcing/player"
+	"github.com/quintans/eventsourcing/projection"
 	"github.com/quintans/eventsourcing/store"
 	"github.com/quintans/faults"
 	"github.com/sirupsen/logrus"
@@ -163,7 +163,7 @@ func (b ProjectionUsecase) ignoreEvent(ctx context.Context, logger *logrus.Entry
 	return false, nil
 }
 
-func (b ProjectionUsecase) CatchUp(ctx context.Context) ([]eventid.EventID, error) {
+func (b ProjectionUsecase) CatchUp(ctx context.Context, resumes []projection.Resume) error {
 	logger := logrus.WithFields(logrus.Fields{
 		"method": "BalanceUsecase.CatchUp",
 	})
@@ -171,19 +171,16 @@ func (b ProjectionUsecase) CatchUp(ctx context.Context) ([]eventid.EventID, erro
 	logger.Info("Cleaning all balance data")
 	err := b.balanceRepository.ClearAllData(ctx)
 	if err != nil {
-		return nil, faults.Errorf("Unable to clean balance data: %w", err)
+		return faults.Errorf("Unable to clean balance data: %w", err)
 	}
 
-	return b.AfterCatchUp(ctx, []eventid.EventID{eventid.Zero})
-}
-
-func (b ProjectionUsecase) AfterCatchUp(ctx context.Context, afterEventIDs []eventid.EventID) ([]eventid.EventID, error) {
 	// replay of events can be from different event stores.
 	// In this case we are only targeting one, the store that has the Account aggregate
+	r := resumes[0]
 	p := player.New(b.esRepo)
-	afterEventID, err := p.Replay(ctx, b.Handle, afterEventIDs[0], store.WithAggregateTypes(event.AggregateType_Account))
+	afterEventID, err := p.ReplayUntil(ctx, b.Handle, r.EventID, store.WithAggregateTypes(event.AggregateType_Account))
 	if err != nil {
-		return nil, faults.Errorf("Unable to replay events after '%s': %w", afterEventID, err)
+		return faults.Errorf("Unable to replay events after '%s': %w", afterEventID, err)
 	}
-	return []eventid.EventID{afterEventID}, nil
+	return nil
 }

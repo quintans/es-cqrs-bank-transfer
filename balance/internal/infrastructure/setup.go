@@ -137,7 +137,7 @@ func startProjection(
 		logger.Fatalf("Could not instantiate NATS projector: %w", err)
 	}
 	projector.AddTopicHandler(cfg.Topic, 1, prjUC.Handle)
-	_, err = projector.Project(ctx, prjUC.CatchUp, prjUC.AfterCatchUp)
+	_, err = projector.Project(ctx, prjUC.CatchUp)
 	if err != nil {
 		logger.Fatalf("Could not create projection: %w", err)
 	}
