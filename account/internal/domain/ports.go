@@ -8,28 +8,18 @@ import (
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+	"github.com/quintans/eventsourcing/projection"
 )
+
+var ErrEntityNotFound = errors.New("entity not found")
+
+type AccountService interface {
+	Create(ctx context.Context, cmd CreateAccountCommand) (uuid.UUID, error)
+	Balance(ctx context.Context, id uuid.UUID) (AccountDTO, error)
+}
 
 type CreateAccountCommand struct {
 	Owner string `json:"owner"`
-}
-
-type DepositCommand struct {
-	ID            uuid.UUID `json:"id"`
-	Money         int64     `json:"money"`
-	TransactionID uuid.UUID `json:"transaction"`
-}
-
-type WithdrawCommand struct {
-	ID            uuid.UUID `json:"id"`
-	Money         int64     `json:"money"`
-	TransactionID uuid.UUID `json:"transaction"`
-}
-
-type CreateTransactionCommand struct {
-	From  uuid.UUID `json:"from"`
-	To    uuid.UUID `json:"to"`
-	Money int64     `json:"money"`
 }
 
 type AccountDTO struct {
@@ -38,28 +28,22 @@ type AccountDTO struct {
 	Owner   string `json:"owner,omitempty"`
 }
 
-var ErrEntityNotFound = errors.New("entity not found")
-
-type AccountUsecaser interface {
-	Create(ctx context.Context, cmd CreateAccountCommand) (uuid.UUID, error)
-	Balance(ctx context.Context, id uuid.UUID) (AccountDTO, error)
-}
-
 type AccountRepository interface {
 	Get(ctx context.Context, id uuid.UUID) (*entity.Account, error)
 	New(ctx context.Context, agg *entity.Account) error
 	Exec(ctx context.Context, id uuid.UUID, do func(*entity.Account) (*entity.Account, error), idempotencyKey string) error
 }
 
-type Metadata struct {
-	EventID     string
-	AggregateID string
+type TransactionService interface {
+	Create(ctx context.Context, cmd CreateTransactionCommand) (uuid.UUID, error)
+	TransactionCreated(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, e event.TransactionCreated) error
+	TransactionFailed(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, aggregateID uuid.UUID, e event.TransactionFailed) error
 }
 
-type TransactionUsecaser interface {
-	Create(ctx context.Context, cmd CreateTransactionCommand) (uuid.UUID, error)
-	TransactionCreated(ctx context.Context, e event.TransactionCreated) error
-	TransactionFailed(ctx context.Context, aggregateID uuid.UUID, e event.TransactionFailed) error
+type CreateTransactionCommand struct {
+	From  uuid.UUID `json:"from"`
+	To    uuid.UUID `json:"to"`
+	Money int64     `json:"money"`
 }
 
 type TransactionRepository interface {

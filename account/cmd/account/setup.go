@@ -1,4 +1,4 @@
-package infrastructure
+package main
 
 import (
 	"context"
@@ -16,18 +16,19 @@ import (
 	"github.com/quintans/eventsourcing/lock"
 	"github.com/quintans/eventsourcing/lock/consullock"
 	"github.com/quintans/eventsourcing/log"
-	"github.com/quintans/eventsourcing/player"
 	"github.com/quintans/eventsourcing/projection"
+	pnats "github.com/quintans/eventsourcing/projection/nats"
+	"github.com/quintans/eventsourcing/sink/nats"
 	"github.com/quintans/eventsourcing/store/mongodb"
-	"github.com/quintans/eventsourcing/stream/nats"
 	"github.com/quintans/eventsourcing/worker"
 	"github.com/quintans/faults"
-	"github.com/quintans/toolkit/locks"
+	"github.com/quintans/toolkit/latch"
 
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/controller"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/app"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/usecase"
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/gateway/esdb"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/infra/controller"
+	"github.com/quintans/es-cqrs-bank-transfer/account/internal/infra/gateway/esdb"
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
 
 type Config struct {
@@ -58,64 +59,36 @@ func Setup(cfg *Config, logger log.Logger) {
 	connStr := fmt.Sprintf("mongodb://%s:%d/%s?replicaSet=rs0", cfg.EsHost, cfg.EsPort, cfg.EsName)
 	err := migration(logger, connStr, cfg.DBMigrationsURL)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Fatalf("%+v", err)
 	}
 
 	// evenstore
-	esRepo, err := mongodb.NewStore(connStr, cfg.EsName)
+	esRepo, err := mongodb.NewStoreWithURI(connStr, cfg.EsName)
 	if err != nil {
-		logger.Fatal(err)
+		logger.Fatalf("%+v", err)
 	}
-	es := eventsourcing.NewEventStore(esRepo, entity.AggregateFactory{}, eventsourcing.WithSnapshotThreshold(cfg.SnapshotThreshold))
+
+	codec := event.NewJSONCodec()
+	esTx := eventsourcing.NewEventStore[*entity.Transaction](esRepo, codec, &eventsourcing.EsOptions{SnapshotThreshold: cfg.SnapshotThreshold})
+	esAcc := eventsourcing.NewEventStore[*entity.Account](esRepo, codec, &eventsourcing.EsOptions{SnapshotThreshold: cfg.SnapshotThreshold})
 
 	// Repository
-	accRepo := esdb.NewAccountRepository(es)
+	pr := mongodb.NewProjectionResume(esRepo.Client(), cfg.EsName, "resumes")
+	txRepo := esdb.NewTransactionRepository(esTx)
+	accRepo := esdb.NewAccountRepository(esAcc)
 
 	// Usecases
-	accUC := usecase.NewAccountUsecase(logger, accRepo)
+	accUC := app.NewAccountService(logger, accRepo)
+	txUC := app.NewTransactionService(logger, pr, txRepo, accRepo, esRepo.WithTx)
 
-	txRepo := esdb.NewTransactionRepository(es)
-	txUC := usecase.NewTransactionUsecase(logger, txRepo, accRepo)
-	reactor := controller.NewListener(logger, txUC, entity.AggregateFactory{}, eventsourcing.JSONCodec{})
+	// controllers
+	reactor := controller.NewReactor(logger, pr, txUC, codec)
+	rest := controller.NewRestController(accUC, txUC)
 
-	c := controller.NewRestController(accUC, txUC)
-
-	latch := locks.NewCountDownLatch()
-
+	ltx := latch.NewCountDownLatch()
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// event forwarding
-	eventForwarderWorkers(ctx, logger, latch, connStr, cfg)
-
-	latch.Add(1)
-	go func() {
-		player.StartGrpcServer(ctx, cfg.GrpcAddress, esRepo)
-		latch.Done()
-	}()
-
-	// Rest server
-	latch.Add(1)
-	go func() {
-		startRestServer(ctx, logger, c, cfg.ApiPort)
-		latch.Done()
-	}()
-
-	// reactor
-	if err := reactorConsumerWorkers(ctx, logger, latch, cfg, reactor.Handler); err != nil {
-		logger.Fatal(err)
-	}
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-quit
-	cancel()
-	latch.WaitWithTimeout(3 * time.Second)
-}
-
-// eventForwarderWorkers creates workers that listen to database changes,
-// transform them to events and publish them into the message bus.
-// Partitions will be grouped in slots, and that will determine the number of workers.
-func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, connStr string, cfg *Config) {
 	lockPool, err := consullock.NewPool(cfg.ConsulURL)
 	if err != nil {
 		logger.Fatalf("Error instantiating Locker: %+v", err)
@@ -123,46 +96,93 @@ func eventForwarderWorkers(ctx context.Context, logger log.Logger, latch *locks.
 	lockFact := func(lockName string) lock.Locker {
 		return lockPool.NewLock(lockName, cfg.LockExpiry)
 	}
+
+	if err := eventForwarderWorkers(ctx, logger, ltx, connStr, cfg, lockFact, esRepo); err != nil {
+		logger.Fatalf("%+v", err)
+	}
+
+	// reactor
+	if err := reactorConsumerWorkers(ctx, logger, ltx, cfg, lockFact, esRepo, reactor); err != nil {
+		logger.Fatalf("%+v", err)
+	}
+
+	// Servers
+
+	// grpc
+	ltx.Add(1)
+	go func() {
+		projection.StartGrpcServer(ctx, cfg.GrpcAddress, esRepo)
+		ltx.Done()
+	}()
+
+	// rest server
+	ltx.Add(1)
+	go func() {
+		startRestServer(ctx, logger, rest, cfg.ApiPort)
+		ltx.Done()
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
+	<-quit
+	cancel()
+	ltx.WaitWithTimeout(3 * time.Second)
+}
+
+// eventForwarderWorkers creates workers that listen to database changes,
+// transform them to events and publish them into the message bus.
+// Partitions will be grouped in slots, and that will determine the number of workers.
+func eventForwarderWorkers(ctx context.Context, logger log.Logger, ltx *latch.CountDownLatch, connStr string, cfg *Config, lockFact projection.LockerFactory, setSinkRepo mongodb.SetSeqRepository) error {
 	// sinker provider
 	sinker, err := nats.NewSink(logger, cfg.Topic, 1, cfg.NatsURL)
 	if err != nil {
-		logger.Fatalf("Error initialising NATS (%s) Sink '%s' on boot: %+v", cfg.NatsURL, cfg.Topic, err)
+		return faults.Errorf("initialising NATS (%s) Sink '%s' on boot: %w", cfg.NatsURL, cfg.Topic, err)
 	}
 
-	feed := mongodb.NewFeed(logger, connStr, cfg.EsName, sinker)
+	feed := mongodb.NewFeed(logger, connStr, cfg.EsName, sinker, setSinkRepo)
 
-	latch.Add(1)
+	ltx.Add(1)
 	go func() {
 		<-ctx.Done()
 		sinker.Close()
-		latch.Done()
+		ltx.Done()
 	}()
 
-	forwarder := projection.EventForwarderWorker(ctx, logger, "forwarder", lockFact, feed)
-	balancer := worker.NewSingleBalancer(logger, "account", forwarder, cfg.LockExpiry/2)
-	latch.Add(1)
+	forwarder := projection.EventForwarderWorker(logger, "account-forwarder", lockFact, feed.Run)
+	balancer := worker.NewSingleBalancer(logger, forwarder, cfg.LockExpiry/2)
+	ltx.Add(1)
 	go func() {
-		balancer.Start(ctx)
-		<-ctx.Done()
-		balancer.Stop(context.Background())
-		latch.Done()
+		<-balancer.Start(ctx)
+		ltx.Done()
 	}()
+
+	return nil
 }
 
 // reactorConsumerWorkers creates workers that listen to events coming through the event bus,
-// forwarding them to an handler. This is the same approache used for projections, but for the write side of things.
+// forwarding them to an handler. This is the same approach used for projections, but for the write side of things.
 // The number of workers will be equal to the number of partitions.
-func reactorConsumerWorkers(ctx context.Context, logger log.Logger, latch *locks.CountDownLatch, cfg *Config, handler projection.EventHandlerFunc) error {
-	const streamName = "accounts-reactor"
-	done, err := nats.NewReactor(ctx, logger, cfg.NatsURL, streamName, cfg.Topic, 1, handler)
+func reactorConsumerWorkers(
+	ctx context.Context,
+	logger log.Logger,
+	ltx *latch.CountDownLatch,
+	cfg *Config,
+	lockFact projection.LockerFactory,
+	esRepo projection.EventsRepository,
+	proj projection.Projection,
+) error {
+	sub, err := pnats.NewSubscriberWithURL(ctx, logger, cfg.NatsURL, cfg.Topic)
 	if err != nil {
-		return err
+		return faults.Errorf("creating NATS subscriber for '%s': %w", cfg.Topic, err)
 	}
 
-	latch.Add(1)
+	reactor := projection.Project(ctx, logger, lockFact, esRepo, sub, proj)
+	balancer := worker.NewSingleBalancer(logger, reactor, cfg.LockExpiry/2)
+
+	ltx.Add(1)
 	go func() {
-		<-done
-		latch.Done()
+		<-balancer.Start(ctx)
+		ltx.Done()
 	}()
 
 	return nil

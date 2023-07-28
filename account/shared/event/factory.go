@@ -2,31 +2,31 @@ package event
 
 import (
 	"github.com/quintans/eventsourcing"
-	"github.com/quintans/faults"
+	"github.com/quintans/eventsourcing/encoding/jsoncodec"
 )
 
-type EventFactory struct{}
-
-func (EventFactory) NewEvent(kind eventsourcing.EventKind) (eventsourcing.Typer, error) {
-	var e eventsourcing.Typer
-	switch kind {
-	case Event_AccountCreated:
-		e = &AccountCreated{}
-	case Event_MoneyDeposited:
-		e = &MoneyDeposited{}
-	case Event_MoneyWithdrawn:
-		e = &MoneyWithdrawn{}
-	case Event_OwnerUpdated:
-		e = &OwnerUpdated{}
-	case Event_TransactionCreated:
-		e = &TransactionCreated{}
-	case Event_TransactionFailed:
-		e = &TransactionFailed{}
-	case Event_TransactionSucceeded:
-		e = &TransactionSucceeded{}
-	}
-	if e == nil {
-		return nil, faults.Errorf("Unknown event kind: %s", kind)
-	}
-	return e, nil
+func NewJSONCodec() *jsoncodec.Codec {
+	c := jsoncodec.New()
+	c.RegisterFactory(Event_AccountCreated, func() eventsourcing.Kinder {
+		return &AccountCreated{}
+	})
+	c.RegisterFactory(Event_MoneyDeposited, func() eventsourcing.Kinder {
+		return &MoneyDeposited{}
+	})
+	c.RegisterFactory(Event_MoneyWithdrawn, func() eventsourcing.Kinder {
+		return &MoneyWithdrawn{}
+	})
+	c.RegisterFactory(Event_OwnerUpdated, func() eventsourcing.Kinder {
+		return &OwnerUpdated{}
+	})
+	c.RegisterFactory(Event_TransactionCreated, func() eventsourcing.Kinder {
+		return &TransactionCreated{}
+	})
+	c.RegisterFactory(Event_TransactionFailed, func() eventsourcing.Kinder {
+		return &TransactionFailed{}
+	})
+	c.RegisterFactory(Event_TransactionSucceeded, func() eventsourcing.Kinder {
+		return &TransactionSucceeded{}
+	})
+	return c
 }

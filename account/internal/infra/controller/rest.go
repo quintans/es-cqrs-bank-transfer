@@ -11,11 +11,11 @@ import (
 )
 
 type RestController struct {
-	accUC domain.AccountUsecaser
-	txUC  domain.TransactionUsecaser
+	accUC domain.AccountService
+	txUC  domain.TransactionService
 }
 
-func NewRestController(accountUc domain.AccountUsecaser, txUC domain.TransactionUsecaser) RestController {
+func NewRestController(accountUc domain.AccountService, txUC domain.TransactionService) RestController {
 	return RestController{
 		accUC: accountUc,
 		txUC:  txUC,

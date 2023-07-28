@@ -3,6 +3,7 @@ package entity
 import (
 	"github.com/google/uuid"
 	"github.com/quintans/eventsourcing"
+	"github.com/quintans/faults"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
@@ -35,7 +36,7 @@ type Transaction struct {
 	FailureReason string         `json:"failureReason,omitempty"`
 }
 
-func (Transaction) GetType() string {
+func (Transaction) GetKind() eventsourcing.Kind {
 	return event.AggregateType_Transaction
 }
 
@@ -43,7 +44,7 @@ func (tx Transaction) GetID() string {
 	return tx.ID.String()
 }
 
-func (tx *Transaction) HandleEvent(e eventsourcing.Eventer) {
+func (tx *Transaction) HandleEvent(e eventsourcing.Eventer) error {
 	switch t := e.(type) {
 	case event.TransactionCreated:
 		tx.HandleTransactionCreated(t)
@@ -51,7 +52,11 @@ func (tx *Transaction) HandleEvent(e eventsourcing.Eventer) {
 		tx.HandleTransactionFailed(t)
 	case event.TransactionSucceeded:
 		tx.HandleTransactionSucceeded(t)
+	default:
+		return faults.Errorf("unknown event '%s' for '%s'", e.GetKind(), tx.GetKind())
 	}
+
+	return nil
 }
 
 func (tx *Transaction) HandleTransactionCreated(e event.TransactionCreated) {

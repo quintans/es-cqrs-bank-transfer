@@ -1,14 +1,17 @@
 package event
 
-import "github.com/google/uuid"
+import (
+	"github.com/google/uuid"
+	"github.com/quintans/eventsourcing"
+)
 
 type TxStatus string
 
 const (
-	AggregateType_Transaction  = "Transaction"
-	Event_TransactionCreated   = "TransactionCreated"
-	Event_TransactionFailed    = "TransactionFailed"
-	Event_TransactionSucceeded = "TransactionSucceeded"
+	AggregateType_Transaction  eventsourcing.Kind = "Transaction"
+	Event_TransactionCreated   eventsourcing.Kind = "TransactionCreated"
+	Event_TransactionFailed    eventsourcing.Kind = "TransactionFailed"
+	Event_TransactionSucceeded eventsourcing.Kind = "TransactionSucceeded"
 
 	PENDING   TxStatus = "PENDING"
 	FAILED    TxStatus = "FAILED"
@@ -22,7 +25,7 @@ type TransactionCreated struct {
 	To    uuid.UUID `json:"to,omitempty"`
 }
 
-func (TransactionCreated) GetType() string {
+func (TransactionCreated) GetKind() eventsourcing.Kind {
 	return Event_TransactionCreated
 }
 
@@ -31,12 +34,12 @@ type TransactionFailed struct {
 	Reason   string `json:"reason,omitempty"`
 }
 
-func (TransactionFailed) GetType() string {
+func (TransactionFailed) GetKind() eventsourcing.Kind {
 	return Event_TransactionFailed
 }
 
 type TransactionSucceeded struct{}
 
-func (TransactionSucceeded) GetType() string {
+func (TransactionSucceeded) GetKind() eventsourcing.Kind {
 	return Event_TransactionSucceeded
 }

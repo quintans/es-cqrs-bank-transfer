@@ -7,8 +7,6 @@ import (
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/sirupsen/logrus"
-
-	"github.com/quintans/es-cqrs-bank-transfer/account/internal/infrastructure"
 )
 
 func init() {
@@ -32,12 +30,12 @@ func init() {
 }
 
 func main() {
-	cfg := &infrastructure.Config{}
+	cfg := &Config{}
 	err := env.Parse(cfg)
 	if err != nil {
 		logrus.Fatal(err)
 	}
 
 	logger := log.NewLogrus(logrus.StandardLogger())
-	infrastructure.Setup(cfg, logger)
+	Setup(cfg, logger)
 }

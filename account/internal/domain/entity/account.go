@@ -29,7 +29,7 @@ func NewAccount() *Account {
 	return a
 }
 
-func (a Account) GetType() string {
+func (a Account) GetKind() eventsourcing.Kind {
 	return event.AggregateType_Account
 }
 
@@ -37,7 +37,7 @@ func (a Account) GetID() string {
 	return a.ID.String()
 }
 
-func (a *Account) HandleEvent(e eventsourcing.Eventer) {
+func (a *Account) HandleEvent(e eventsourcing.Eventer) error {
 	switch t := e.(type) {
 	case event.AccountCreated:
 		a.HandleAccountCreated(t)
@@ -47,7 +47,11 @@ func (a *Account) HandleEvent(e eventsourcing.Eventer) {
 		a.HandleMoneyWithdrawn(t)
 	case event.OwnerUpdated:
 		a.HandleOwnerUpdated(t)
+	default:
+		return faults.Errorf("unknown event '%s' for '%s'", e.GetKind(), a.GetKind())
 	}
+
+	return nil
 }
 
 func CreateAccount(owner string, id uuid.UUID) *Account {

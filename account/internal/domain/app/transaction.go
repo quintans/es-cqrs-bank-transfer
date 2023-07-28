@@ -1,4 +1,4 @@
-package usecase
+package app
 
 import (
 	"context"
@@ -6,31 +6,38 @@ import (
 	"github.com/google/uuid"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/log"
+	"github.com/quintans/eventsourcing/projection"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
 
-type TransactionUsecase struct {
+type TransactionService struct {
 	logger  log.Logger
+	wrs     projection.WriteResumeStore
 	txRepo  domain.TransactionRepository
 	accRepo domain.AccountRepository
+	tx      Tx
 }
 
-func NewTransactionUsecase(
+func NewTransactionService(
 	logger log.Logger,
+	wrs projection.WriteResumeStore,
 	txRepo domain.TransactionRepository,
 	accRepo domain.AccountRepository,
-) TransactionUsecase {
-	return TransactionUsecase{
+	tx Tx,
+) TransactionService {
+	return TransactionService{
 		logger:  logger,
+		wrs:     wrs,
 		txRepo:  txRepo,
 		accRepo: accRepo,
+		tx:      tx,
 	}
 }
 
-func (uc TransactionUsecase) Create(ctx context.Context, cmd domain.CreateTransactionCommand) (uuid.UUID, error) {
+func (uc TransactionService) Create(ctx context.Context, cmd domain.CreateTransactionCommand) (uuid.UUID, error) {
 	id := uuid.New()
 	uc.logger.WithTags(log.Tags{
 		"method": "TransactionUsecase.Create",
@@ -50,7 +57,7 @@ func (uc TransactionUsecase) Create(ctx context.Context, cmd domain.CreateTransa
 // Another restriction for the split is that a transaction origin and destination are optional, making it a bit more trickier to split.
 // If the aggregates belonged to different services, then we would have no choice but to break it down into
 // several chained event handlers: TransactionCreated, MoneyWithdrawn, MoneyDeposited, TransactionFailed
-func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.TransactionCreated) error {
+func (uc TransactionService) TransactionCreated(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, e event.TransactionCreated) error {
 	logger := uc.logger.WithTags(log.Tags{
 		"method": "TransactionUsecase.TransactionCreated",
 		"event":  e,
@@ -66,14 +73,21 @@ func (uc TransactionUsecase) TransactionCreated(ctx context.Context, e event.Tra
 		return err
 	}
 
-	// complete transaction
-	return uc.txRepo.Exec(ctx, e.ID, func(t *entity.Transaction) (*entity.Transaction, error) {
-		t.Succeeded()
-		return t, nil
-	}, eventsourcing.EmptyIdempotencyKey)
+	return uc.tx(ctx, func(ctx context.Context) error {
+		// complete transaction
+		err := uc.txRepo.Exec(ctx, e.ID, func(t *entity.Transaction) (*entity.Transaction, error) {
+			t.Succeeded()
+			return t, nil
+		}, eventsourcing.EmptyIdempotencyKey)
+		if err != nil {
+			return err
+		}
+
+		return uc.wrs.SetStreamResumeToken(ctx, resumeKey, resumeToken)
+	})
 }
 
-func (uc TransactionUsecase) whitdraw(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
+func (uc TransactionService) whitdraw(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
 	if accID == uuid.Nil {
 		return true, nil
 	}
@@ -104,7 +118,7 @@ func (uc TransactionUsecase) whitdraw(ctx context.Context, logger log.Logger, ac
 	return true, nil
 }
 
-func (uc TransactionUsecase) deposit(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
+func (uc TransactionService) deposit(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
 	if accID == uuid.Nil {
 		return true, nil
 	}
@@ -135,7 +149,7 @@ func (uc TransactionUsecase) deposit(ctx context.Context, logger log.Logger, acc
 	return true, nil
 }
 
-func (uc TransactionUsecase) TransactionFailed(ctx context.Context, aggregateID uuid.UUID, e event.TransactionFailed) error {
+func (uc TransactionService) TransactionFailed(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, aggregateID uuid.UUID, e event.TransactionFailed) error {
 	if !e.Rollback {
 		return nil
 	}
@@ -144,10 +158,16 @@ func (uc TransactionUsecase) TransactionFailed(ctx context.Context, aggregateID 
 	if err != nil {
 		return err
 	}
-	err = uc.accRepo.Exec(ctx, tx.From, func(acc *entity.Account) (*entity.Account, error) {
-		err := acc.Deposit(tx.ID, tx.Money)
-		return acc, err
-	}, tx.ID.String()+"/rollback")
 
-	return err
+	return uc.tx(ctx, func(ctx context.Context) error {
+		err := uc.accRepo.Exec(ctx, tx.From, func(acc *entity.Account) (*entity.Account, error) {
+			err := acc.Deposit(tx.ID, tx.Money)
+			return acc, err
+		}, tx.ID.String()+"/rollback")
+		if err != nil {
+			return err
+		}
+
+		return uc.wrs.SetStreamResumeToken(ctx, resumeKey, resumeToken)
+	})
 }
