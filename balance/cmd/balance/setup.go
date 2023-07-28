@@ -1,4 +1,4 @@
-package infrastructure
+package main
 
 import (
 	"context"
@@ -12,19 +12,19 @@ import (
 	"github.com/elastic/go-elasticsearch/v7/esapi"
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
-	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
-	"github.com/quintans/eventsourcing"
+	"github.com/quintans/eventsourcing/lock"
+	"github.com/quintans/eventsourcing/lock/consullock"
 	"github.com/quintans/eventsourcing/log"
-	"github.com/quintans/eventsourcing/player"
-	esElasticsearch "github.com/quintans/eventsourcing/store/elasticsearch"
-	"github.com/quintans/eventsourcing/stream/nats"
-	"github.com/quintans/toolkit/locks"
+	"github.com/quintans/eventsourcing/projection"
+	pnats "github.com/quintans/eventsourcing/projection/nats"
+	"github.com/quintans/eventsourcing/worker"
+	"github.com/quintans/faults"
+	"github.com/quintans/toolkit/latch"
 	"github.com/sirupsen/logrus"
-
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 )
 
 const (
@@ -69,30 +69,40 @@ func Setup(cfg Config) {
 
 	waitForElastic(es)
 
-	repo := gateway.NewBalanceRepository(es)
+	pr := gateway.NewProjectionResume(es, "stream_resume")
+	repo := gateway.NewBalanceRepository(logger, pr, es)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// es player
-	esRepo := player.NewGrpcRepository(cfg.EsAddress)
+	esRepo := projection.NewGrpcRepository(cfg.EsAddress)
 
-	latch := locks.NewCountDownLatch()
+	ltx := latch.NewCountDownLatch()
 
-	startProjection(ctx, cfg, repo, esRepo)
+	lockPool, err := consullock.NewPool(cfg.ConsulURL)
+	if err != nil {
+		logger.Fatalf("Error instantiating Locker: %+v", err)
+	}
+	lockFact := func(lockName string) lock.Locker {
+		return lockPool.NewLock(lockName, cfg.LockExpiry)
+	}
 
+	codec := event.NewJSONCodec()
 	balanceUC := usecase.NewBalanceUsecase(repo)
+	proj := controller.NewProjection(logger, pr, balanceUC, codec)
+	startProjection(ctx, logger, ltx, &cfg, lockFact, esRepo, proj)
 
 	restCtrl := controller.RestController{
 		BalanceUsecase: balanceUC,
 	}
 
-	latch.Add(1)
-	go startRestServer(ctx, latch, restCtrl, cfg.ApiPort)
+	ltx.Add(1)
+	go startRestServer(ctx, ltx, restCtrl, cfg.ApiPort)
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
 	<-quit
 	cancel()
-	latch.WaitWithTimeout(3 * time.Second)
+	ltx.WaitWithTimeout(3 * time.Second)
 }
 
 func waitForElastic(es *elasticsearch.Client) {
@@ -122,29 +132,32 @@ func waitForElastic(es *elasticsearch.Client) {
 // These workers manage the connection with the partition subscribers and the recording of the stream resumer value.
 func startProjection(
 	ctx context.Context,
-	cfg Config,
-	repo domain.BalanceRepository,
-	esRepo player.Repository,
-) {
-	prjUC := usecase.NewProjectionUsecase(repo, event.EventFactory{}, eventsourcing.JSONCodec{}, nil, esRepo)
+	logger log.Logger,
+	ltx *latch.CountDownLatch,
+	cfg *Config,
+	lockFact projection.LockerFactory,
+	esRepo projection.EventsRepository,
+	proj projection.Projection,
+) error {
+	sub, err := pnats.NewSubscriberWithURL(ctx, logger, cfg.NatsURL, cfg.Topic)
+	if err != nil {
+		return faults.Errorf("creating NATS subscriber for '%s': %w", cfg.Topic, err)
+	}
 
-	resumeStore, err := esElasticsearch.NewElasticSearchStreamResumer(cfg.ElasticURL, "stream_resume")
-	if err != nil {
-		logger.Fatal("Error instantiating resume store: %v", err)
-	}
-	projector, err := nats.NewProjector(ctx, logger, cfg.NatsURL, resumeStore, BalanceProjectionName)
-	if err != nil {
-		logger.Fatalf("Could not instantiate NATS projector: %w", err)
-	}
-	projector.AddTopicHandler(cfg.Topic, 1, prjUC.Handle)
-	_, err = projector.Project(ctx, prjUC.CatchUp)
-	if err != nil {
-		logger.Fatalf("Could not create projection: %w", err)
-	}
+	projector := projection.Project(ctx, logger, lockFact, esRepo, sub, proj)
+	balancer := worker.NewSingleBalancer(logger, projector, cfg.LockExpiry/2)
+
+	ltx.Add(1)
+	go func() {
+		<-balancer.Start(ctx)
+		ltx.Done()
+	}()
+
+	return nil
 }
 
-func startRestServer(ctx context.Context, latch *locks.CountDownLatch, restCtrl controller.RestController, port int) {
-	defer latch.Done()
+func startRestServer(ctx context.Context, ltx *latch.CountDownLatch, restCtrl controller.RestController, port int) {
+	defer ltx.Done()
 
 	// Echo instance
 	e := echo.New()

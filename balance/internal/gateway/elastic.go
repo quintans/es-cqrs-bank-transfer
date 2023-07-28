@@ -12,6 +12,8 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/eventsourcing/eventid"
+	"github.com/quintans/eventsourcing/log"
+	"github.com/quintans/eventsourcing/projection"
 	"github.com/quintans/faults"
 )
 
@@ -37,12 +39,17 @@ type SearchResponse struct {
 type Hits struct{}
 
 type BalanceRepository struct {
+	projection.WriteResumeStore
+
 	client *elasticsearch.Client
+	logger log.Logger
 }
 
-func NewBalanceRepository(client *elasticsearch.Client) BalanceRepository {
+func NewBalanceRepository(logger log.Logger, wrs projection.WriteResumeStore, client *elasticsearch.Client) BalanceRepository {
 	return BalanceRepository{
-		client: client,
+		WriteResumeStore: wrs,
+		client:           client,
+		logger:           logger,
 	}
 }
 
@@ -157,7 +164,7 @@ func (b BalanceRepository) GetMaxEventID(ctx context.Context) (eventid.EventID, 
 	return eventid.Zero, nil
 }
 
-func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Balance) error {
+func (b BalanceRepository) CreateAccount(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, balance entity.Balance) error {
 	// we don't want to repeat the ID and version values in the doc
 	docID := balance.ID
 	balance.ID = uuid.Nil
@@ -184,6 +191,15 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Bal
 	if res.IsError() {
 		return faults.Errorf("[%s] Error CreatAccount document ID=%s", res.Status(), docID)
 	}
+
+	err = b.SetStreamResumeToken(ctx, resumeKey, resumeToken)
+	if err != nil {
+		b.logger.WithError(err).WithTags(log.Tags{
+			"key":   resumeKey.String(),
+			"token": resumeToken.String(),
+		}).Errorf("Failed to save resume key on create")
+	}
+
 	return nil
 }
 
@@ -218,7 +234,7 @@ func (b BalanceRepository) GetByID(ctx context.Context, aggregateID uuid.UUID) (
 	return *balance, nil
 }
 
-func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) error {
+func (b BalanceRepository) Update(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, balance entity.Balance) error {
 	// we don't want to repeat the ID and version values in the doc
 	docID := balance.ID
 	balance.ID = uuid.Nil
@@ -247,6 +263,15 @@ func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) e
 	if res.IsError() {
 		return faults.Errorf("[%s] Error updating document ID=%s", res.Status(), docID)
 	}
+
+	err = b.SetStreamResumeToken(ctx, resumeKey, resumeToken)
+	if err != nil {
+		b.logger.WithError(err).WithTags(log.Tags{
+			"key":   resumeKey.String(),
+			"token": resumeToken.String(),
+		}).Errorf("Failed to save resume key on update")
+	}
+
 	return nil
 }
 

@@ -7,11 +7,14 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/eventid"
+	"github.com/quintans/eventsourcing/projection"
 )
 
 type Metadata struct {
 	EventID     eventid.EventID
 	AggregateID uuid.UUID
+	ResumeKey   projection.ResumeKey
+	ResumeToken projection.Token
 }
 
 type LastIDs struct {
@@ -34,9 +37,9 @@ type BalanceRepository interface {
 	GetAllOrderByOwnerAsc(ctx context.Context) ([]entity.Balance, error)
 	GetEventID(ctx context.Context, aggregateID uuid.UUID) (eventid.EventID, error)
 	GetMaxEventID(ctx context.Context) (eventid.EventID, error)
-	CreateAccount(ctx context.Context, balance entity.Balance) error
+	CreateAccount(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, balance entity.Balance) error
 	GetByID(ctx context.Context, aggregateID uuid.UUID) (entity.Balance, error)
-	Update(ctx context.Context, balance entity.Balance) error
+	Update(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, balance entity.Balance) error
 	ClearAllData(ctx context.Context) error
 }
 
