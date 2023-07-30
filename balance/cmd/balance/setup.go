@@ -13,9 +13,9 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
-	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/controller"
-	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/usecase"
-	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/gateway"
+	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/app"
+	controller "github.com/quintans/es-cqrs-bank-transfer/balance/internal/infra/controller"
+	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/infra/gateway"
 	"github.com/quintans/eventsourcing/lock"
 	"github.com/quintans/eventsourcing/lock/consullock"
 	"github.com/quintans/eventsourcing/log"
@@ -69,14 +69,15 @@ func Setup(cfg Config) {
 
 	waitForElastic(es)
 
+	ltx := latch.NewCountDownLatch()
+
+	// repositories
 	pr := gateway.NewProjectionResume(es, "stream_resume")
-	repo := gateway.NewBalanceRepository(logger, pr, es)
+	repo := gateway.NewBalanceRepository(logger, es)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// es player
 	esRepo := projection.NewGrpcRepository(cfg.EsAddress)
-
-	ltx := latch.NewCountDownLatch()
 
 	lockPool, err := consullock.NewPool(cfg.ConsulURL)
 	if err != nil {
@@ -86,14 +87,18 @@ func Setup(cfg Config) {
 		return lockPool.NewLock(lockName, cfg.LockExpiry)
 	}
 
+	// services
 	codec := event.NewJSONCodec()
-	balanceUC := usecase.NewBalanceUsecase(repo)
-	proj := controller.NewProjection(logger, pr, balanceUC, codec)
-	startProjection(ctx, logger, ltx, &cfg, lockFact, esRepo, proj)
+	balanceService := app.NewBalanceService(pr, repo)
 
+	// controllers
+	proj := controller.NewProjection(logger, repo, balanceService, codec)
 	restCtrl := controller.RestController{
-		BalanceUsecase: balanceUC,
+		BalanceUsecase: balanceService,
 	}
+
+	// servers
+	startProjection(ctx, logger, ltx, &cfg, lockFact, esRepo, proj)
 
 	ltx.Add(1)
 	go startRestServer(ctx, ltx, restCtrl, cfg.ApiPort)

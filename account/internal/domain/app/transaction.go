@@ -37,14 +37,14 @@ func NewTransactionService(
 	}
 }
 
-func (uc TransactionService) Create(ctx context.Context, cmd domain.CreateTransactionCommand) (uuid.UUID, error) {
+func (s TransactionService) Create(ctx context.Context, cmd domain.CreateTransactionCommand) (uuid.UUID, error) {
 	id := uuid.New()
-	uc.logger.WithTags(log.Tags{
+	s.logger.WithTags(log.Tags{
 		"method": "TransactionUsecase.Create",
 	}).Infof("Creating transaction %s from: %s, to: %s, money: %d", id, cmd.From, cmd.To, cmd.Money)
 
 	tx := entity.CreateTransaction(id, cmd.From, cmd.To, cmd.Money)
-	ok, err := uc.txRepo.CreateIfNew(ctx, tx)
+	ok, err := s.txRepo.CreateIfNew(ctx, tx)
 	if !ok || err != nil {
 		return uuid.Nil, err
 	}
@@ -57,25 +57,25 @@ func (uc TransactionService) Create(ctx context.Context, cmd domain.CreateTransa
 // Another restriction for the split is that a transaction origin and destination are optional, making it a bit more trickier to split.
 // If the aggregates belonged to different services, then we would have no choice but to break it down into
 // several chained event handlers: TransactionCreated, MoneyWithdrawn, MoneyDeposited, TransactionFailed
-func (uc TransactionService) TransactionCreated(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, e event.TransactionCreated) error {
-	logger := uc.logger.WithTags(log.Tags{
+func (s TransactionService) TransactionCreated(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, e event.TransactionCreated) error {
+	logger := s.logger.WithTags(log.Tags{
 		"method": "TransactionUsecase.TransactionCreated",
 		"event":  e,
 	})
 
-	ok, err := uc.whitdraw(ctx, logger, e.From, e.Money, e.ID)
+	ok, err := s.whitdraw(ctx, logger, e.From, e.Money, e.ID)
 	if !ok || err != nil {
 		return err
 	}
 
-	ok, err = uc.deposit(ctx, logger, e.To, e.Money, e.ID)
+	ok, err = s.deposit(ctx, logger, e.To, e.Money, e.ID)
 	if !ok || err != nil {
 		return err
 	}
 
-	return uc.tx(ctx, func(ctx context.Context) error {
+	return s.tx(ctx, func(ctx context.Context) error {
 		// complete transaction
-		err := uc.txRepo.Exec(ctx, e.ID, func(t *entity.Transaction) (*entity.Transaction, error) {
+		err := s.txRepo.Exec(ctx, e.ID, func(t *entity.Transaction) (*entity.Transaction, error) {
 			t.Succeeded()
 			return t, nil
 		}, eventsourcing.EmptyIdempotencyKey)
@@ -83,11 +83,11 @@ func (uc TransactionService) TransactionCreated(ctx context.Context, resumeKey p
 			return err
 		}
 
-		return uc.wrs.SetStreamResumeToken(ctx, resumeKey, resumeToken)
+		return s.wrs.SetStreamResumeToken(ctx, resumeKey, resumeToken)
 	})
 }
 
-func (uc TransactionService) whitdraw(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
+func (s TransactionService) whitdraw(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
 	if accID == uuid.Nil {
 		return true, nil
 	}
@@ -95,7 +95,7 @@ func (uc TransactionService) whitdraw(ctx context.Context, logger log.Logger, ac
 	var failed bool
 	logger.Infof("Withdrawing from %s, money: %d", accID, money)
 	idempotencyKey := txID.String() + "/withdraw"
-	err := uc.accRepo.Exec(ctx, accID, func(acc *entity.Account) (*entity.Account, error) {
+	err := s.accRepo.Exec(ctx, accID, func(acc *entity.Account) (*entity.Account, error) {
 		err := acc.Withdraw(txID, money)
 		if err == nil {
 			return acc, nil
@@ -104,7 +104,7 @@ func (uc TransactionService) whitdraw(ctx context.Context, logger log.Logger, ac
 
 		failed = true
 		// transaction failed
-		errTx := uc.txRepo.Exec(ctx, txID, func(tx *entity.Transaction) (*entity.Transaction, error) {
+		errTx := s.txRepo.Exec(ctx, txID, func(tx *entity.Transaction) (*entity.Transaction, error) {
 			tx.WithdrawFailed("From account: " + err.Error())
 			return tx, nil
 		}, idempotencyKey)
@@ -118,7 +118,7 @@ func (uc TransactionService) whitdraw(ctx context.Context, logger log.Logger, ac
 	return true, nil
 }
 
-func (uc TransactionService) deposit(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
+func (s TransactionService) deposit(ctx context.Context, logger log.Logger, accID uuid.UUID, money int64, txID uuid.UUID) (bool, error) {
 	if accID == uuid.Nil {
 		return true, nil
 	}
@@ -126,7 +126,7 @@ func (uc TransactionService) deposit(ctx context.Context, logger log.Logger, acc
 	var failed bool
 	logger.Infof("Depositing from %s, money: %d", accID, money)
 	idempotencyKey := txID.String() + "/deposit"
-	err := uc.accRepo.Exec(ctx, accID, func(acc *entity.Account) (*entity.Account, error) {
+	err := s.accRepo.Exec(ctx, accID, func(acc *entity.Account) (*entity.Account, error) {
 		err := acc.Deposit(txID, money)
 		if err == nil {
 			return acc, nil
@@ -135,7 +135,7 @@ func (uc TransactionService) deposit(ctx context.Context, logger log.Logger, acc
 
 		failed = true
 		// transaction failed. Need to rollback withdraw
-		errTx := uc.txRepo.Exec(ctx, txID, func(tx *entity.Transaction) (*entity.Transaction, error) {
+		errTx := s.txRepo.Exec(ctx, txID, func(tx *entity.Transaction) (*entity.Transaction, error) {
 			tx.DepositFailed("To account: " + err.Error())
 			return tx, nil
 		}, idempotencyKey)
@@ -149,18 +149,18 @@ func (uc TransactionService) deposit(ctx context.Context, logger log.Logger, acc
 	return true, nil
 }
 
-func (uc TransactionService) TransactionFailed(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, aggregateID uuid.UUID, e event.TransactionFailed) error {
+func (s TransactionService) TransactionFailed(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, aggregateID uuid.UUID, e event.TransactionFailed) error {
 	if !e.Rollback {
 		return nil
 	}
 
-	tx, err := uc.txRepo.Get(ctx, aggregateID)
+	tx, err := s.txRepo.Get(ctx, aggregateID)
 	if err != nil {
 		return err
 	}
 
-	return uc.tx(ctx, func(ctx context.Context) error {
-		err := uc.accRepo.Exec(ctx, tx.From, func(acc *entity.Account) (*entity.Account, error) {
+	return s.tx(ctx, func(ctx context.Context) error {
+		err := s.accRepo.Exec(ctx, tx.From, func(acc *entity.Account) (*entity.Account, error) {
 			err := acc.Deposit(tx.ID, tx.Money)
 			return acc, err
 		}, tx.ID.String()+"/rollback")
@@ -168,6 +168,6 @@ func (uc TransactionService) TransactionFailed(ctx context.Context, resumeKey pr
 			return err
 		}
 
-		return uc.wrs.SetStreamResumeToken(ctx, resumeKey, resumeToken)
+		return s.wrs.SetStreamResumeToken(ctx, resumeKey, resumeToken)
 	})
 }

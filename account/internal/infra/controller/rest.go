@@ -11,14 +11,14 @@ import (
 )
 
 type RestController struct {
-	accUC domain.AccountService
-	txUC  domain.TransactionService
+	accService domain.AccountService
+	txService  domain.TransactionService
 }
 
-func NewRestController(accountUc domain.AccountService, txUC domain.TransactionService) RestController {
+func NewRestController(accountService domain.AccountService, txService domain.TransactionService) RestController {
 	return RestController{
-		accUC: accountUc,
-		txUC:  txUC,
+		accService: accountService,
+		txService:  txService,
 	}
 }
 
@@ -32,7 +32,7 @@ func (ctl RestController) Create(c echo.Context) error {
 	if err := c.Bind(&cmd); err != nil {
 		return err
 	}
-	id, err := ctl.accUC.Create(c.Request().Context(), cmd)
+	id, err := ctl.accService.Create(c.Request().Context(), cmd)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {
 		return err
@@ -45,7 +45,7 @@ func (ctl RestController) Transaction(c echo.Context) error {
 	if err := c.Bind(&cmd); err != nil {
 		return err
 	}
-	id, err := ctl.txUC.Create(c.Request().Context(), cmd)
+	id, err := ctl.txService.Create(c.Request().Context(), cmd)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {
 		return err
@@ -58,7 +58,7 @@ func (ctl RestController) Balance(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	dto, err := ctl.accUC.Balance(c.Request().Context(), id)
+	dto, err := ctl.accService.Balance(c.Request().Context(), id)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {
 		return err

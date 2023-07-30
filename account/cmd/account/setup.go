@@ -78,12 +78,12 @@ func Setup(cfg *Config, logger log.Logger) {
 	accRepo := esdb.NewAccountRepository(esAcc)
 
 	// Usecases
-	accUC := app.NewAccountService(logger, accRepo)
-	txUC := app.NewTransactionService(logger, pr, txRepo, accRepo, esRepo.WithTx)
+	accService := app.NewAccountService(logger, accRepo)
+	txService := app.NewTransactionService(logger, pr, txRepo, accRepo, esRepo.WithTx)
 
 	// controllers
-	reactor := controller.NewReactor(logger, pr, txUC, codec)
-	rest := controller.NewRestController(accUC, txUC)
+	reactor := controller.NewReactor(logger, pr, txService, codec)
+	rest := controller.NewRestController(accService, txService)
 
 	ltx := latch.NewCountDownLatch()
 	ctx, cancel := context.WithCancel(context.Background())

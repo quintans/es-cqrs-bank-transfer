@@ -9,7 +9,7 @@ import (
 )
 
 type RestController struct {
-	BalanceUsecase domain.BalanceUsecase
+	BalanceUsecase domain.BalanceService
 }
 
 func (ctl RestController) Ping(c echo.Context) error {

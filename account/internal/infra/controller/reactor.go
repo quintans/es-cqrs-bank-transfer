@@ -18,16 +18,16 @@ import (
 type Reactor struct {
 	projection.ReadResumeStore
 
-	logger log.Logger
-	txUC   domain.TransactionService
-	codec  eventsourcing.Codec
+	logger    log.Logger
+	txService domain.TransactionService
+	codec     eventsourcing.Codec
 }
 
 func NewReactor(logger log.Logger, rrs projection.ReadResumeStore, transactionUsecase domain.TransactionService, codec eventsourcing.Codec) Reactor {
 	return Reactor{
 		ReadResumeStore: rrs,
 		logger:          logger,
-		txUC:            transactionUsecase,
+		txService:       transactionUsecase,
 		codec:           codec,
 	}
 }
@@ -65,14 +65,14 @@ func (p Reactor) Handle(ctx context.Context, meta projection.MetaData, e *sink.M
 
 	switch t := evt.(type) {
 	case event.TransactionCreated:
-		err = p.txUC.TransactionCreated(ctx, key, meta.Token, t)
+		err = p.txService.TransactionCreated(ctx, key, meta.Token, t)
 	case event.TransactionFailed:
 		var aggID uuid.UUID
 		aggID, err = uuid.Parse(e.AggregateID)
 		if err != nil {
 			return faults.Errorf("unable to parse aggregate ID: %w", err)
 		}
-		err = p.txUC.TransactionFailed(ctx, key, meta.Token, aggID, t)
+		err = p.txService.TransactionFailed(ctx, key, meta.Token, aggID, t)
 	default:
 		logger.Warnf("Unknown event type: %s\n", e.Kind)
 	}

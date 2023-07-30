@@ -14,6 +14,10 @@ import (
 	"github.com/quintans/faults"
 )
 
+type Sequencer interface {
+	GetMaxSequence(ctx context.Context) (projection.Token, error)
+}
+
 type ProjectionService interface {
 	AccountCreated(ctx context.Context, m domain.Metadata, ac event.AccountCreated) error
 	MoneyDeposited(ctx context.Context, m domain.Metadata, ac event.MoneyDeposited) error
@@ -21,24 +25,23 @@ type ProjectionService interface {
 }
 
 type Projection struct {
-	projection.ReadResumeStore
-
-	logger  log.Logger
-	service ProjectionService
-	codec   eventsourcing.Codec
+	logger    log.Logger
+	sequencer Sequencer
+	service   ProjectionService
+	codec     eventsourcing.Codec
 }
 
 func NewProjection(
 	logger log.Logger,
-	rrs projection.ReadResumeStore,
+	sequencer Sequencer,
 	service ProjectionService,
 	codec eventsourcing.Codec,
 ) Projection {
 	return Projection{
-		ReadResumeStore: rrs,
-		logger:          logger,
-		service:         service,
-		codec:           codec,
+		sequencer: sequencer,
+		logger:    logger,
+		service:   service,
+		codec:     codec,
 	}
 }
 
@@ -80,6 +83,11 @@ func (p Projection) Handle(ctx context.Context, meta projection.MetaData, e *sin
 		ResumeToken: meta.Token,
 	}
 
+	ignore, err := p.ignoreEvent(ctx, m)
+	if err != nil || ignore {
+		return err
+	}
+
 	evt, err := eventsourcing.RehydrateEvent(p.codec, e.Kind, e.Body)
 	if err != nil {
 		return err
@@ -96,4 +104,18 @@ func (p Projection) Handle(ctx context.Context, meta projection.MetaData, e *sin
 		logger.Warnf("Unknown event type: %s\n", e.Kind)
 	}
 	return err
+}
+
+func (b Projection) GetStreamResumeToken(ctx context.Context, key projection.ResumeKey) (projection.Token, error) {
+	return b.sequencer.GetMaxSequence(ctx)
+}
+
+func (b Projection) ignoreEvent(ctx context.Context, m domain.Metadata) (bool, error) {
+	dbToken, err := b.GetStreamResumeToken(ctx, m.ResumeKey)
+	if err != nil {
+		return false, err
+	}
+	// guarding against redelivery
+	ignore := m.ResumeToken.Sequence() <= dbToken.Sequence()
+	return ignore, nil
 }

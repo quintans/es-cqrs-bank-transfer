@@ -11,19 +11,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
-	"github.com/quintans/eventsourcing/eventid"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/projection"
 	"github.com/quintans/faults"
 )
 
 const (
-	index        = "balance"
-	hitsField    = "hits"
-	ownerField   = "owner"
-	eventIDField = "event_id"
-	source       = "_source"
-	hits         = "hits"
+	index         = "balance"
+	hitsField     = "hits"
+	ownerField    = "owner"
+	sequenceField = "sequence"
+	source        = "_source"
+	hits          = "hits"
 )
 
 type GetResponse struct {
@@ -39,17 +38,14 @@ type SearchResponse struct {
 type Hits struct{}
 
 type BalanceRepository struct {
-	projection.WriteResumeStore
-
 	client *elasticsearch.Client
 	logger log.Logger
 }
 
-func NewBalanceRepository(logger log.Logger, wrs projection.WriteResumeStore, client *elasticsearch.Client) BalanceRepository {
+func NewBalanceRepository(logger log.Logger, client *elasticsearch.Client) BalanceRepository {
 	return BalanceRepository{
-		WriteResumeStore: wrs,
-		client:           client,
-		logger:           logger,
+		client: client,
+		logger: logger,
 	}
 }
 
@@ -95,19 +91,16 @@ func sourceToBalance(doc map[string]interface{}) (entity.Balance, error) {
 	var err error
 	b.ID, err = uuid.Parse(doc["_id"].(string))
 	if err != nil {
-		return entity.Balance{}, err
+		return entity.Balance{}, faults.Wrap(err)
 	}
 	if v, ok := doc["_version"]; ok {
 		b.Version = int64(v.(float64))
 	}
-	if v, ok := source["event_id"]; ok {
-		b.EventID, err = eventid.Parse(v.(string))
-		if err != nil {
-			return entity.Balance{}, err
-		}
+	if v, ok := source[sequenceField]; ok {
+		b.Sequence = uint64(v.(float64))
 	}
-	if v, ok := source["partition"]; ok {
-		b.Partition = uint32(v.(float64))
+	if v, ok := source["kind"]; ok {
+		b.Owner = v.(string)
 	}
 	if v, ok := source["status"]; ok {
 		b.Status = event.Status(v.(string))
@@ -121,19 +114,11 @@ func sourceToBalance(doc map[string]interface{}) (entity.Balance, error) {
 	return b, nil
 }
 
-func (b BalanceRepository) GetEventID(ctx context.Context, aggregateID uuid.UUID) (eventid.EventID, error) {
-	balance, err := b.GetByID(ctx, aggregateID)
-	if err != nil {
-		return eventid.Zero, err
-	}
-	return balance.EventID, nil
-}
-
-func (b BalanceRepository) GetMaxEventID(ctx context.Context) (eventid.EventID, error) {
+func (b BalanceRepository) GetMaxSequence(ctx context.Context) (projection.Token, error) {
 	s := `{
 		"sort": [
 		  {
-			"event_id": { "order": "desc"}
+			"sequence": { "order": "desc"}
 		  }
 		]
 	  }`
@@ -146,25 +131,25 @@ func (b BalanceRepository) GetMaxEventID(ctx context.Context) (eventid.EventID, 
 	}
 	res, err := req.Do(ctx, b.client)
 	if err != nil {
-		return eventid.Zero, faults.Errorf("Error getting response for SearchRequest: %w", err)
+		return projection.Token{}, faults.Errorf("Error getting response for SearchRequest: %w", err)
 	}
 	defer res.Body.Close()
 
 	if res.IsError() {
-		return eventid.Zero, faults.Errorf("[%s] Error GetMaxEventID", res.Status())
+		return projection.Token{}, faults.Errorf("[%s] Error GetMaxEventID", res.Status())
 	}
 
 	balances, err := responseToBalances(res)
 	if err != nil {
-		return eventid.Zero, err
+		return projection.Token{}, err
 	}
 	if len(balances) > 0 {
-		return balances[0].EventID, nil
+		return projection.NewToken(balances[0].Kind, balances[0].Sequence), nil
 	}
-	return eventid.Zero, nil
+	return projection.NewToken(projection.CatchUpToken, 0), nil
 }
 
-func (b BalanceRepository) CreateAccount(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, balance entity.Balance) error {
+func (b BalanceRepository) CreateAccount(ctx context.Context, balance entity.Balance) error {
 	// we don't want to repeat the ID and version values in the doc
 	docID := balance.ID
 	balance.ID = uuid.Nil
@@ -190,14 +175,6 @@ func (b BalanceRepository) CreateAccount(ctx context.Context, resumeKey projecti
 
 	if res.IsError() {
 		return faults.Errorf("[%s] Error CreatAccount document ID=%s", res.Status(), docID)
-	}
-
-	err = b.SetStreamResumeToken(ctx, resumeKey, resumeToken)
-	if err != nil {
-		b.logger.WithError(err).WithTags(log.Tags{
-			"key":   resumeKey.String(),
-			"token": resumeToken.String(),
-		}).Errorf("Failed to save resume key on create")
 	}
 
 	return nil
@@ -234,7 +211,7 @@ func (b BalanceRepository) GetByID(ctx context.Context, aggregateID uuid.UUID) (
 	return *balance, nil
 }
 
-func (b BalanceRepository) Update(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, balance entity.Balance) error {
+func (b BalanceRepository) Update(ctx context.Context, balance entity.Balance) error {
 	// we don't want to repeat the ID and version values in the doc
 	docID := balance.ID
 	balance.ID = uuid.Nil
@@ -262,38 +239,6 @@ func (b BalanceRepository) Update(ctx context.Context, resumeKey projection.Resu
 
 	if res.IsError() {
 		return faults.Errorf("[%s] Error updating document ID=%s", res.Status(), docID)
-	}
-
-	err = b.SetStreamResumeToken(ctx, resumeKey, resumeToken)
-	if err != nil {
-		b.logger.WithError(err).WithTags(log.Tags{
-			"key":   resumeKey.String(),
-			"token": resumeToken.String(),
-		}).Errorf("Failed to save resume key on update")
-	}
-
-	return nil
-}
-
-func (b BalanceRepository) ClearAllData(ctx context.Context) error {
-	// delete all docs
-	refresh := true
-	del := esapi.DeleteByQueryRequest{
-		Index: []string{index},
-		Body: strings.NewReader(`{
-			"query" : { 
-				"match_all" : {}
-			}
-		}`),
-		Refresh: &refresh,
-	}
-	resDel, err := del.Do(ctx, b.client)
-	if err != nil {
-		return faults.Errorf("Error getting response when deleting docs ClearAllData(balance): %w", err)
-	}
-	defer resDel.Body.Close()
-	if resDel.IsError() {
-		return faults.Errorf("[%s] Error deleting docs", resDel.Status())
 	}
 
 	return nil
