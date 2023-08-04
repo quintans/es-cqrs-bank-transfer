@@ -8,9 +8,9 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain/entity"
 	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/utils"
 	"github.com/quintans/eventsourcing/projection"
 	"github.com/quintans/faults"
-	"github.com/sirupsen/logrus"
 )
 
 var ErrAggregateNotFound = errors.New("aggregate Not Found")
@@ -44,9 +44,7 @@ func (b BalanceService) ListAll(ctx context.Context) ([]entity.Balance, error) {
 
 // gog:@monitor
 func (b BalanceService) AccountCreated(ctx context.Context, m domain.Metadata, ac event.AccountCreated) error {
-	logger := logrus.WithFields(logrus.Fields{
-		"method": "ProjectionUsecase.AccountCreated",
-	})
+	logger := utils.LogFromCtx(ctx)
 
 	e := entity.Balance{
 		ID:       ac.ID,

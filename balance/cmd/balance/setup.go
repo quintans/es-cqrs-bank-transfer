@@ -93,9 +93,7 @@ func Setup(cfg Config) {
 
 	// controllers
 	proj := controller.NewProjection(logger, repo, balanceService, codec)
-	restCtrl := controller.RestController{
-		BalanceUsecase: balanceService,
-	}
+	restCtrl := controller.NewRestController(logger, balanceService)
 
 	// servers
 	startProjection(ctx, logger, ltx, &cfg, lockFact, esRepo, proj)

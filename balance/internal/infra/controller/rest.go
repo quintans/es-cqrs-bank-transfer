@@ -6,10 +6,20 @@ import (
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v4"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/utils"
+	"github.com/quintans/eventsourcing/log"
 )
 
 type RestController struct {
-	BalanceUsecase domain.BalanceService
+	logger         log.Logger
+	balanceService domain.BalanceService
+}
+
+func NewRestController(logger log.Logger, balanceService domain.BalanceService) RestController {
+	return RestController{
+		logger:         logger,
+		balanceService: balanceService,
+	}
 }
 
 func (ctl RestController) Ping(c echo.Context) error {
@@ -17,7 +27,8 @@ func (ctl RestController) Ping(c echo.Context) error {
 }
 
 func (ctl RestController) ListAll(c echo.Context) error {
-	docs, err := ctl.BalanceUsecase.ListAll(c.Request().Context())
+	ctx := utils.LogToCtx(c.Request().Context(), ctl.logger)
+	docs, err := ctl.balanceService.ListAll(ctx)
 	if err != nil {
 		return err
 	}
@@ -29,7 +40,8 @@ func (ctl RestController) GetOne(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	doc, err := ctl.BalanceUsecase.GetOne(c.Request().Context(), id)
+	ctx := utils.LogToCtx(c.Request().Context(), ctl.logger)
+	doc, err := ctl.balanceService.GetOne(ctx, id)
 	if err != nil {
 		return err
 	}

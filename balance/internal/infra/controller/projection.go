@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/utils"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/projection"
@@ -38,8 +39,8 @@ func NewProjection(
 	codec eventsourcing.Codec,
 ) Projection {
 	return Projection{
-		sequencer: sequencer,
 		logger:    logger,
+		sequencer: sequencer,
 		service:   service,
 		codec:     codec,
 	}
@@ -57,11 +58,6 @@ func (p Projection) Handle(ctx context.Context, meta projection.MetaData, e *sin
 	if !util.In(e.AggregateKind, event.AggregateType_Account) {
 		return nil
 	}
-
-	logger := p.logger.WithTags(log.Tags{
-		"projection": domain.ProjectionBalance,
-		"event":      e,
-	})
 
 	aggID, err := uuid.Parse(e.AggregateID)
 	if err != nil {
@@ -82,6 +78,12 @@ func (p Projection) Handle(ctx context.Context, meta projection.MetaData, e *sin
 		ResumeKey:   key,
 		ResumeToken: meta.Token,
 	}
+
+	logger := p.logger.WithTags(log.Tags{
+		"projection": domain.ProjectionBalance,
+		"event":      e,
+	})
+	ctx = utils.LogToCtx(ctx, logger)
 
 	ignore, err := p.ignoreEvent(ctx, m)
 	if err != nil || ignore {
@@ -106,12 +108,13 @@ func (p Projection) Handle(ctx context.Context, meta projection.MetaData, e *sin
 	return err
 }
 
-func (b Projection) GetStreamResumeToken(ctx context.Context, key projection.ResumeKey) (projection.Token, error) {
-	return b.sequencer.GetMaxSequence(ctx)
+func (p Projection) GetStreamResumeToken(ctx context.Context, _ projection.ResumeKey) (projection.Token, error) {
+	ctx = utils.LogToCtx(ctx, p.logger)
+	return p.sequencer.GetMaxSequence(ctx)
 }
 
-func (b Projection) ignoreEvent(ctx context.Context, m domain.Metadata) (bool, error) {
-	dbToken, err := b.GetStreamResumeToken(ctx, m.ResumeKey)
+func (p Projection) ignoreEvent(ctx context.Context, m domain.Metadata) (bool, error) {
+	dbToken, err := p.GetStreamResumeToken(ctx, m.ResumeKey)
 	if err != nil {
 		return false, err
 	}
