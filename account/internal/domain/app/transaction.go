@@ -11,11 +11,11 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/utils"
 )
 
 // gog:aspect
 type TransactionService struct {
-	logger  log.Logger
 	wrs     projection.WriteResumeStore
 	txRepo  domain.TransactionRepository
 	accRepo domain.AccountRepository
@@ -23,14 +23,12 @@ type TransactionService struct {
 }
 
 func NewTransactionService(
-	logger log.Logger,
 	wrs projection.WriteResumeStore,
 	txRepo domain.TransactionRepository,
 	accRepo domain.AccountRepository,
 	tx Tx,
 ) TransactionService {
 	return TransactionService{
-		logger:  logger,
 		wrs:     wrs,
 		txRepo:  txRepo,
 		accRepo: accRepo,
@@ -41,9 +39,8 @@ func NewTransactionService(
 // gog:@monitor
 func (s TransactionService) Create(ctx context.Context, cmd domain.CreateTransactionCommand) (uuid.UUID, error) {
 	id := uuid.New()
-	s.logger.WithTags(log.Tags{
-		"method": "TransactionUsecase.Create",
-	}).Infof("Creating transaction %s from: %s, to: %s, money: %d", id, cmd.From, cmd.To, cmd.Money)
+	utils.LogFromCtx(ctx).
+		Infof("Creating transaction %s from: %s, to: %s, money: %d", id, cmd.From, cmd.To, cmd.Money)
 
 	tx := entity.CreateTransaction(id, cmd.From, cmd.To, cmd.Money)
 	ok, err := s.txRepo.CreateIfNew(ctx, tx)
@@ -61,9 +58,8 @@ func (s TransactionService) Create(ctx context.Context, cmd domain.CreateTransac
 // several chained event handlers: TransactionCreated, MoneyWithdrawn, MoneyDeposited, TransactionFailed
 // gog:@monitor
 func (s TransactionService) TransactionCreated(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, e event.TransactionCreated) error {
-	logger := s.logger.WithTags(log.Tags{
-		"method": "TransactionUsecase.TransactionCreated",
-		"event":  e,
+	logger := utils.LogFromCtx(ctx).WithTags(log.Tags{
+		"event": e,
 	})
 
 	ok, err := s.whitdraw(ctx, logger, e.From, e.Money, e.ID)

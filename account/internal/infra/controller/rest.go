@@ -8,15 +8,19 @@ import (
 	"github.com/labstack/echo/v4"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/utils"
+	"github.com/quintans/eventsourcing/log"
 )
 
 type RestController struct {
+	logger     log.Logger
 	accService domain.AccountService
 	txService  domain.TransactionService
 }
 
-func NewRestController(accountService domain.AccountService, txService domain.TransactionService) RestController {
+func NewRestController(logger log.Logger, accountService domain.AccountService, txService domain.TransactionService) RestController {
 	return RestController{
+		logger:     logger,
 		accService: accountService,
 		txService:  txService,
 	}
@@ -32,7 +36,8 @@ func (ctl RestController) Create(c echo.Context) error {
 	if err := c.Bind(&cmd); err != nil {
 		return err
 	}
-	id, err := ctl.accService.Create(c.Request().Context(), cmd)
+	ctx := utils.LogToCtx(c.Request().Context(), ctl.logger)
+	id, err := ctl.accService.Create(ctx, cmd)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {
 		return err
@@ -45,7 +50,8 @@ func (ctl RestController) Transaction(c echo.Context) error {
 	if err := c.Bind(&cmd); err != nil {
 		return err
 	}
-	id, err := ctl.txService.Create(c.Request().Context(), cmd)
+	ctx := utils.LogToCtx(c.Request().Context(), ctl.logger)
+	id, err := ctl.txService.Create(ctx, cmd)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {
 		return err
@@ -58,7 +64,8 @@ func (ctl RestController) Balance(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	dto, err := ctl.accService.Balance(c.Request().Context(), id)
+	ctx := utils.LogToCtx(c.Request().Context(), ctl.logger)
+	dto, err := ctl.accService.Balance(ctx, id)
 	ok, err := resolveError(c, err)
 	if ok || err != nil {
 		return err

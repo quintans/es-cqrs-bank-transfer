@@ -16,3 +16,9 @@ func LogFromCtx(ctx context.Context) log.Logger {
 	l := ctx.Value(logKey)
 	return l.(log.Logger)
 }
+
+func LogTagsToCtx(ctx context.Context, tags log.Tags) (context.Context, log.Logger) {
+	logger := LogFromCtx(ctx).WithTags(tags)
+
+	return LogToCtx(ctx, logger), logger
+}

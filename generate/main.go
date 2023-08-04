@@ -103,9 +103,6 @@ func (a *Aspect) WriteBody(mapper generator.Mapper, _ AspectOptions) error {
 	}
 
 	a.HPrintf("type %sAspect struct {\n", mapper.GetName())
-	for _, v := range a.getFieldsOrdered() {
-		a.HPrintln(v)
-	}
 	a.HPrintf("Next %s\n", mapper.GetName())
 	a.HPrintf("}\n\n")
 
@@ -136,6 +133,11 @@ func (a *Aspect) monitor(m *generator.Method, structName, methodName string) (st
 		return "", fmt.Errorf("method %s must return an error type to use the 'monitor' aspect", m.Name())
 	}
 
+	s.BPrintf(`ctx, logger := utils.LogTagsToCtx(ctx, log.Tags{
+		"method": "%s.%s",
+	})
+	`, structName, m.Name())
+
 	s.BPrintln(strings.Join(rets, ","), " := ", methodName, "(", m.Parameters(true), ")")
 
 	var sb generator.Scribler
@@ -148,10 +150,9 @@ func (a *Aspect) monitor(m *generator.Method, structName, methodName string) (st
 	}
 	sb.BPrint("}")
 	s.BPrintf(`if %s != nil {
-		a.Logger.WithError(err).
+		logger.WithError(err).
 		WithTags(log.Tags{
-			"method": "%s.%s",
-			"arguments": utils.LazyStr(func() string {
+			"arguments": utils.NewLazyStr(func() string {
 				b, err := json.MarshalIndent(%s, "", "    ")
 				if err != nil {
 					return err.Error()
@@ -161,7 +162,7 @@ func (a *Aspect) monitor(m *generator.Method, structName, methodName string) (st
 		}).
 		Error("calling method")
 	}
-	`, errVar, structName, m.Name(), sb.String())
+	`, errVar, sb.String())
 
 	s.BPrintln("return ", strings.Join(rets, ","))
 	s.BPrintln("}")
@@ -170,7 +171,6 @@ func (a *Aspect) monitor(m *generator.Method, structName, methodName string) (st
 		a.imports = map[string]string{}
 	}
 
-	a.addField("Logger", "log.Logger", "github.com/quintans/eventsourcing/log")
 	a.addImport("github.com/quintans/es-cqrs-bank-transfer/shared/utils")
 
 	return s.String(), nil
