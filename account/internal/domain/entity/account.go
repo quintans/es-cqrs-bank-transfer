@@ -7,7 +7,7 @@ import (
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/faults"
 
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
 )
 
 var (

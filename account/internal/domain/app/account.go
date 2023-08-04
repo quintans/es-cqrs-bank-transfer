@@ -10,6 +10,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 )
 
+// gog:aspect
 type AccountService struct {
 	logger log.Logger
 	repo   domain.AccountRepository
@@ -22,6 +23,7 @@ func NewAccountService(logger log.Logger, repo domain.AccountRepository) Account
 	}
 }
 
+// gog:@monitor
 func (s AccountService) Create(ctx context.Context, createAccount domain.CreateAccountCommand) (uuid.UUID, error) {
 	id := uuid.New()
 	s.logger.WithTags(log.Tags{
@@ -35,6 +37,7 @@ func (s AccountService) Create(ctx context.Context, createAccount domain.CreateA
 	return id, nil
 }
 
+// gog:@monitor
 func (s AccountService) Balance(ctx context.Context, id uuid.UUID) (domain.AccountDTO, error) {
 	var dto domain.AccountDTO
 

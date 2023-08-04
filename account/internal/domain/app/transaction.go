@@ -10,9 +10,10 @@ import (
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
 )
 
+// gog:aspect
 type TransactionService struct {
 	logger  log.Logger
 	wrs     projection.WriteResumeStore
@@ -37,6 +38,7 @@ func NewTransactionService(
 	}
 }
 
+// gog:@monitor
 func (s TransactionService) Create(ctx context.Context, cmd domain.CreateTransactionCommand) (uuid.UUID, error) {
 	id := uuid.New()
 	s.logger.WithTags(log.Tags{
@@ -57,6 +59,7 @@ func (s TransactionService) Create(ctx context.Context, cmd domain.CreateTransac
 // Another restriction for the split is that a transaction origin and destination are optional, making it a bit more trickier to split.
 // If the aggregates belonged to different services, then we would have no choice but to break it down into
 // several chained event handlers: TransactionCreated, MoneyWithdrawn, MoneyDeposited, TransactionFailed
+// gog:@monitor
 func (s TransactionService) TransactionCreated(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, e event.TransactionCreated) error {
 	logger := s.logger.WithTags(log.Tags{
 		"method": "TransactionUsecase.TransactionCreated",
@@ -149,6 +152,7 @@ func (s TransactionService) deposit(ctx context.Context, logger log.Logger, accI
 	return true, nil
 }
 
+// gog:@monitor
 func (s TransactionService) TransactionFailed(ctx context.Context, resumeKey projection.ResumeKey, resumeToken projection.Token, aggregateID uuid.UUID, e event.TransactionFailed) error {
 	if !e.Rollback {
 		return nil

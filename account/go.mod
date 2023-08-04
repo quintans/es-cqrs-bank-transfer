@@ -7,7 +7,7 @@ require (
 	github.com/golang-migrate/migrate/v4 v4.15.1
 	github.com/google/uuid v1.3.0
 	github.com/labstack/echo/v4 v4.11.1
-	github.com/quintans/es-cqrs-bank-transfer/account/shared v0.0.0-00010101000000-000000000000
+	github.com/quintans/es-cqrs-bank-transfer/shared v0.0.0
 	github.com/quintans/eventsourcing v0.33.0
 	github.com/quintans/faults v1.6.0
 	github.com/quintans/toolkit v0.3.5
@@ -70,4 +70,4 @@ require (
 	google.golang.org/protobuf v1.28.0 // indirect
 )
 
-replace github.com/quintans/es-cqrs-bank-transfer/account/shared => ./shared
+replace github.com/quintans/es-cqrs-bank-transfer/shared => ../shared

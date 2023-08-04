@@ -28,7 +28,7 @@ import (
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/infra/controller"
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/infra/gateway/esdb"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
 )
 
 type Config struct {

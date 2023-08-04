@@ -12,7 +12,7 @@ import (
 	"github.com/quintans/faults"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
 )
 
 type Reactor struct {

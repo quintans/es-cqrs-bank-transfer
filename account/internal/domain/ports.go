@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/quintans/es-cqrs-bank-transfer/account/internal/domain/entity"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
 	"github.com/quintans/eventsourcing/projection"
 )
 

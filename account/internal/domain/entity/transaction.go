@@ -5,7 +5,7 @@ import (
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/faults"
 
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
 )
 
 func CreateTransaction(id uuid.UUID, from uuid.UUID, to uuid.UUID, money int64) *Transaction {

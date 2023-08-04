@@ -4,8 +4,8 @@ import (
 	"context"
 
 	"github.com/google/uuid"
-	"github.com/quintans/es-cqrs-bank-transfer/account/shared/event"
 	"github.com/quintans/es-cqrs-bank-transfer/balance/internal/domain"
+	"github.com/quintans/es-cqrs-bank-transfer/shared/event"
 	"github.com/quintans/eventsourcing"
 	"github.com/quintans/eventsourcing/log"
 	"github.com/quintans/eventsourcing/projection"

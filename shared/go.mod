@@ -1,4 +1,4 @@
-module github.com/quintans/es-cqrs-bank-transfer/account/shared
+module github.com/quintans/es-cqrs-bank-transfer/shared
 
 go 1.20
 
@@ -13,4 +13,6 @@ require (
 	github.com/modern-go/reflect2 v1.0.2 // indirect
 	github.com/oklog/ulid/v2 v2.0.2 // indirect
 	github.com/quintans/faults v1.6.0 // indirect
+	github.com/sirupsen/logrus v1.8.1 // indirect
+	golang.org/x/sys v0.8.0 // indirect
 )
