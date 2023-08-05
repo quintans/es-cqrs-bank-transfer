@@ -3,7 +3,7 @@ module generate
 go 1.20
 
 require (
-	github.com/quintans/gog v0.4.0
+	github.com/quintans/gog v0.5.0
 	golang.org/x/exp v0.0.0-20230801115018-d63ba01acd4b
 )
 
